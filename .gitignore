@@ -1,0 +1,16 @@
+# R
+.RData
+.Rhistory
+.Rproj.user/
+
+# Credentials
+scripts/credentials.json
+
+# Database (regeneratable)
+data/*.sqlite
+
+# Logs (runtime output)
+logs/
+
+# IDE
+.obsidian/
