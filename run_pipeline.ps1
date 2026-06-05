@@ -9,7 +9,7 @@
 
 param(
     [string]$ProjectRoot = "G:\My Drive\Scripting Projects\wnba_project",
-    [string]$RScript     = "C:\Program Files\R\R-4.4.0\bin\Rscript.exe"
+    [string]$RScript     = "C:\Program Files\R\R-4.6.0\bin\Rscript.exe"
 )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
