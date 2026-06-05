@@ -67,7 +67,11 @@ fetch_team_roster <- function(team_id) {
   body    <- espn_get(paste0("teams/", team_id, "/roster"))
   athletes <- body$athletes
 
-  if (is.null(athletes) || length(athletes) == 0) return(tibble())
+  if (is.null(athletes) || length(athletes) == 0) {
+    return(tibble(team_id = character(), player_id = character(),
+                  player_name = character(), status = character(),
+                  injury_type = character()))
+  }
 
   map_dfr(athletes, function(group) {
     items <- group$items %||% list()

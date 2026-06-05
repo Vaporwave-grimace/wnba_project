@@ -40,12 +40,19 @@ init_db <- function(path = DB_PATH) {
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       game_id        TEXT,
       market         TEXT,
+      outcome_name   TEXT,
       direction      TEXT,    -- 'up' or 'down'
       magnitude      REAL,    -- size of move in points
       books_moved    INTEGER, -- number of books that moved
       detected_at    TEXT
     )
   ")
+  # Idempotent migration: add outcome_name if DB was created before this column existed
+  existing_cols <- dbListFields(con, "steam_movements")
+  if (!"outcome_name" %in% existing_cols) {
+    dbExecute(con, "ALTER TABLE steam_movements ADD COLUMN outcome_name TEXT")
+    message("[db_setup] Migrated steam_movements: added outcome_name column")
+  }
 
   # ── Roster / stats tables ─────────────────────────────────────────────────────
 
