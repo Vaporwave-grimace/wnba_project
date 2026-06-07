@@ -29,13 +29,20 @@
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
+## Current State Note (2026-06-06)
+
+- Telegram heartbeat has been silent since 2026-06-04 (no output observed 6/4–6/6) — root cause unknown; Task Scheduler task is registered and was confirmed enabled 2026-06-02, but pipeline may have stopped firing or games count is returning 0
+- **WNBA season is live** (games confirmed on schedule) — 0 game count suggests either odds API returning empty or date/time window logic issue in `run_pipeline.R`
+- No code changes made in this session; issue flagged for next WNBA session
+- Diagnostic to run: `source("scripts/run_pipeline.R")` manually and check if games populate; compare output to `Get-ScheduledTask -TaskName "WNBA Pipeline" | Get-ScheduledTaskInfo`
+
 ## Recent Session Summary (2026-06-02)
 
 - **`run_pipeline.R` Telegram heartbeat added:** every 30-minute pipeline invocation now sends a summary to `@LBA_Betting_Intel_Bot` with games tracked, steam flags, and injury updates; steam and injury alerts still fire immediately on detection; heartbeat fires at end of each run
 - **`setup_schedule.ps1` fixed:** two bugs corrected — (1) execution policy: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` then `powershell -ExecutionPolicy Bypass` workaround; (2) trigger repetition: `-Once` with `-RepetitionInterval` is the correct syntax for repeating scheduled tasks on Windows (not `-Daily` + `.Repetition.Interval` property assignment which doesn't work)
 - **WNBA Pipeline scheduled task registered and confirmed:** `Enabled: True`, `Repetition: MSFT_TaskRepetitionPattern` (30-minute interval), `NextRunTime: 6/2/2026 10:30:30 AM`; runs 8:00 AM–11:30 PM daily
 - **First pipeline run confirmed:** `Start-ScheduledTask -TaskName "WNBA Pipeline"` fired; Telegram confirmed: "🏀 WNBA Pipeline | Jun 02 12:18 PM ET | 📊 Games: 0 | 🔥 Steam: 0 | 🩹 Injuries: 0" — zeros expected on first run (opener snapshot fires at 9 AM ET, run was post-window; baselines established for future delta comparisons)
-- Next: monitor tomorrow 9 AM ET opener snapshot for non-zero game count; steam flags start appearing tomorrow afternoon (need opener + midday snapshot to compare); injury updates will fire as ESPN detects status changes from today's baseline
+- Next: debug silent Telegram (no output 6/4+); verify Task Scheduler still firing; check games query for date logic
 
 ## Previous Session Summary (2026-06-01)
 
