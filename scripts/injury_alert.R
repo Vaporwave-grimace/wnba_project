@@ -64,29 +64,51 @@ fetch_espn_teams <- function() {
 # Fetch roster with injury status for a single team.
 # Returns one row per player; includes `injury_status` and `injury_type`.
 fetch_team_roster <- function(team_id) {
-  body    <- espn_get(paste0("teams/", team_id, "/roster"))
+  body     <- espn_get(paste0("teams/", team_id, "/roster"))
   athletes <- body$athletes
 
-  if (is.null(athletes) || length(athletes) == 0) {
-    return(tibble(team_id = character(), player_id = character(),
+  empty <- tibble(team_id = character(), player_id = character(),
                   player_name = character(), status = character(),
-                  injury_type = character()))
+                  injury_type = character())
+
+  if (is.null(athletes) || length(athletes) == 0) return(empty)
+
+  # ESPN returns athletes as either:
+  #   (a) a list of groups, each with $items — the historic format
+  #   (b) a flat list of player objects — newer format seen in some seasons
+  # Detect by checking whether the first element has an $items field.
+  first <- athletes[[1]]
+  if (!is.null(first$items)) {
+    # Grouped format (a)
+    player_list <- unlist(lapply(athletes, function(g) g$items %||% list()),
+                          recursive = FALSE)
+  } else {
+    # Flat format (b) — athletes IS the player list
+    player_list <- athletes
   }
 
-  map_dfr(athletes, function(group) {
-    items <- group$items %||% list()
-    map_dfr(items, function(a) {
-      status      <- a$status$type$description %||% "Active"
-      injury_type <- a$injuries[[1]]$type$description %||% NA_character_
+  if (length(player_list) == 0) return(empty)
 
-      tibble(
-        team_id      = as.character(team_id),
-        player_id    = a$id %||% NA_character_,
-        player_name  = a$fullName %||% NA_character_,
-        status       = status,
-        injury_type  = injury_type
-      )
-    })
+  map_dfr(player_list, function(a) {
+    # ESPN returns status as either:
+    #   (old) a list {type: {description: "Active"}}
+    #   (new) a plain character string "Active"
+    p_status <- tryCatch({
+      s <- a$status
+      if (is.character(s))        s                         # new flat format
+      else if (!is.null(s$type))  s$type$description %||% "Active"  # old nested
+      else "Active"
+    }, error = function(e) "Active")
+
+    injury_type <- tryCatch(a$injuries[[1]]$type$description %||% NA_character_,
+                            error = function(e) NA_character_)
+    tibble(
+      team_id     = as.character(team_id),
+      player_id   = a$id %||% NA_character_,
+      player_name = a$fullName %||% NA_character_,
+      status      = p_status,
+      injury_type = injury_type
+    )
   })
 }
 
@@ -99,6 +121,16 @@ fetch_all_injuries <- function() {
     Sys.sleep(0.5)  # be polite between team fetches
     fetch_team_roster(tid)
   })
+
+  # Guard: ESPN sometimes returns empty athlete groups, leaving rosters with no cols
+  if (nrow(rosters) == 0 || !"status" %in% names(rosters)) {
+    message("[injury] No roster data returned — ESPN API may have changed structure.")
+    return(tibble(
+      player_name = character(), team_id   = character(),
+      status      = character(), injury_type = character(),
+      source      = character(), reported_at = character()
+    ))
+  }
 
   rosters |>
     filter(status != "Active") |>
@@ -276,6 +308,24 @@ alert_discrepancies <- function(discrepancies, new_injuries, creds) {
     send_discord(msg, creds)
     Sys.sleep(1)  # avoid rate limiting between alerts
   }
+}
+
+# Format a steam detection alert
+format_steam_alert <- function(steam_row, home_team = NULL, away_team = NULL) {
+  game_label <- if (!is.null(home_team) && !is.null(away_team)) {
+    paste0(away_team, " @ ", home_team)
+  } else {
+    steam_row$game_id
+  }
+  paste0(
+    "\U0001f525 *STEAM DETECTED*\n",
+    "*Game:* ", game_label, "\n",
+    "*Market:* ", steam_row$market, " — ", steam_row$outcome_name, "\n",
+    "*Direction:* ", toupper(steam_row$direction), "\n",
+    "*Move:* ", round(steam_row$magnitude, 2), " pts across ",
+    steam_row$books_moved, " sharp book(s)\n",
+    "*Detected:* ", steam_row$detected_at, " UTC"
+  )
 }
 
 # Format a new injury notification (no discrepancy — just FYI)

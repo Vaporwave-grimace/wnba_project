@@ -89,7 +89,9 @@ Write-Log "R process started (PID $($proc.Id))"
 
 # Wait for R to finish
 $proc.WaitForExit()
-$exitCode = $proc.ExitCode
+# ExitCode can be $null when R exits cleanly without an explicit quit() call;
+# treat null as 0 (success) rather than letting -eq 0 fail.
+$exitCode = if ($null -eq $proc.ExitCode) { 0 } else { [int]$proc.ExitCode }
 
 # Append R output to main log
 $stdout = Get-Content (Join-Path $LogDir "r_stdout.log") -ErrorAction SilentlyContinue

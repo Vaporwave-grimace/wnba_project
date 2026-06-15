@@ -20,13 +20,17 @@ CREDS_PATH   <- here::here("scripts", "credentials.json")
 ODDS_BASE    <- "https://api.the-odds-api.com/v4"
 SPORT        <- "basketball_wnba"
 
-# Sharp books used for steam detection — these move first on syndicate action
-SHARP_BOOKS  <- c("pinnacle", "betonlineag", "bookmaker", "lowvig", "fanduel", "draftkings")
+# Sharp books used for steam detection — these move first on syndicate action.
+# FanDuel/DraftKings excluded: recreational books that move LAST, not first.
+# In thin WNBA markets even 1 sharp book moving is meaningful signal.
+SHARP_BOOKS  <- c("pinnacle", "betonlineag", "bookmaker", "lowvig")
 
-# Steam thresholds
-STEAM_MIN_MOVE    <- 1.0    # minimum line movement in points to qualify
-STEAM_MIN_BOOKS   <- 3      # minimum number of books that must move together
-STEAM_WINDOW_MINS <- 30     # movement must occur within this many minutes
+# Steam thresholds — calibrated for WNBA's thin market.
+# NFL/NBA defaults (1.0 pts, 3 books) are too tight here; meaningful WNBA steam
+# is often 0.5 pts across 2 books. Adjust up once we have flag history.
+STEAM_MIN_MOVE    <- 0.5    # minimum line movement in points to qualify
+STEAM_MIN_BOOKS   <- 2      # minimum number of books that must move together
+STEAM_WINDOW_MINS <- 60     # movement must occur within this many minutes
 
 # ── Credentials & Key Rotation ────────────────────────────────────────────────
 
@@ -277,8 +281,9 @@ detect_steam <- function(snap_early, snap_late, con = NULL) {
 #   run_collection("closing", con, compare_to = "midday")
 
 run_collection <- function(snapshot_type, con, compare_to = NULL) {
-  odds <- fetch_wnba_odds(snapshot_type = snapshot_type)
+  odds  <- fetch_wnba_odds(snapshot_type = snapshot_type)
   save_snapshot(odds, con)
+  steam <- tibble()
 
   if (!is.null(compare_to) && nrow(odds) > 0) {
     prior <- dbGetQuery(con, "
@@ -286,11 +291,12 @@ run_collection <- function(snapshot_type, con, compare_to = NULL) {
     ", list(compare_to)) |> as_tibble()
 
     if (nrow(prior) > 0) {
-      detect_steam(prior, odds, con = con)
+      steam <- detect_steam(prior, odds, con = con)
     } else {
       message("No prior snapshot found for '", compare_to, "' — skipping steam check.")
     }
   }
 
-  invisible(odds)
+  # Return both odds and any steam flags so callers can send alerts
+  invisible(list(odds = odds, steam = steam))
 }

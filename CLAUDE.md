@@ -29,14 +29,36 @@
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
-## Current State Note (2026-06-06)
+## Current State Note (2026-06-14)
 
-- Telegram heartbeat has been silent since 2026-06-04 (no output observed 6/4–6/6) — root cause unknown; Task Scheduler task is registered and was confirmed enabled 2026-06-02, but pipeline may have stopped firing or games count is returning 0
-- **WNBA season is live** (games confirmed on schedule) — 0 game count suggests either odds API returning empty or date/time window logic issue in `run_pipeline.R`
-- No code changes made in this session; issue flagged for next WNBA session
-- Diagnostic to run: `source("scripts/run_pipeline.R")` manually and check if games populate; compare output to `Get-ScheduledTask -TaskName "WNBA Pipeline" | Get-ScheduledTaskInfo`
+- **Pipeline fully operational.** Telegram heartbeat confirmed firing: 6 games tracked Jun 14.
+- All prior blockers resolved — see Recent Session Summary below.
+- Next focus: steam detection quality (0 flags despite live action — check threshold calibration and whether line movement data is populating); shadow model predictions logging against closing lines for CLV tracking.
 
-## Recent Session Summary (2026-06-02)
+## Recent Session Summary (2026-06-14, Session 2)
+
+- **Heartbeat message overhauled** — replaced count-only summary with actionable data:
+  - **Game slate:** shows each matchup (Away @ Home), tip time ET, favored team + spread, o/u total pulled from latest snapshot (Pinnacle-first book preference)
+  - **Steam detail:** when flags exist, lists game matchup, market, direction (↑/↓), magnitude in pts, and book count
+  - **Injury detail:** when injuries exist, lists player name, team, status — not just a count
+  - Zero-count sections collapse to a single "No X today" line
+- Change in `scripts/run_pipeline.R` — summary block at bottom (~lines 287+)
+
+## Previous Session Summary (2026-06-14)
+
+- **R path in `.bat` fixed** and `setup_schedule.ps1` re-run to re-register Task Scheduler with correct path
+- **`now_et()` forward reference** resolved in `run_pipeline.R`
+- **ESPN API structure** patched in `fetch_team_roster()` and `fetch_all_injuries()` to match current response shape
+- **`run_pipeline.ps1` null ExitCode** fixed — `$proc.ExitCode` returns null on clean R exit; now treated as 0, eliminating false FAILED log entries
+- **Telegram confirmed:** `🏀 WNBA Pipeline | Jun 14 04:04 PM ET | 📊 Games: 6 | 🔥 Steam: 0 | 🩹 Injuries: 0`
+- Next: investigate 0 steam flags with 6 live games — check `Steam_Movements` threshold and odds API line history population
+
+## Previous Session Summary (2026-06-06)
+
+- Silent Telegram heartbeat flagged (no output 6/4–6/6); root cause not identified; diagnostics deferred
+- No code changes made
+
+## Session Summary (2026-06-02)
 
 - **`run_pipeline.R` Telegram heartbeat added:** every 30-minute pipeline invocation now sends a summary to `@LBA_Betting_Intel_Bot` with games tracked, steam flags, and injury updates; steam and injury alerts still fire immediately on detection; heartbeat fires at end of each run
 - **`setup_schedule.ps1` fixed:** two bugs corrected — (1) execution policy: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` then `powershell -ExecutionPolicy Bypass` workaround; (2) trigger repetition: `-Once` with `-RepetitionInterval` is the correct syntax for repeating scheduled tasks on Windows (not `-Daily` + `.Repetition.Interval` property assignment which doesn't work)
