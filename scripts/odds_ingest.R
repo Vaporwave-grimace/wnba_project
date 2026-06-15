@@ -265,6 +265,126 @@ detect_steam <- function(snap_early, snap_late, con = NULL) {
   steam_flags
 }
 
+# ── CLV Tracking ─────────────────────────────────────────────────────────────
+
+# Called from alert_steam_flags() whenever steam fires.
+# Logs the current (post-steam) line to clv_log as the bet entry point.
+# Skips silently if an entry already exists for that game/market/side.
+record_clv_entry <- function(steam_df, con) {
+  if (is.null(steam_df) || nrow(steam_df) == 0) return(invisible(NULL))
+
+  for (i in seq_len(nrow(steam_df))) {
+    row <- steam_df[i, ]
+
+    existing <- tryCatch(
+      dbGetQuery(con, "
+        SELECT COUNT(*) AS n FROM clv_log
+        WHERE game_id = ? AND market = ? AND side = ?
+      ", list(row$game_id, row$market, row$outcome_name))$n,
+      error = function(e) 1L
+    )
+    if (existing > 0) next
+
+    current_pt <- tryCatch(
+      dbGetQuery(con, "
+        SELECT point FROM lines
+        WHERE game_id = ? AND market = ? AND outcome_name = ?
+          AND bookmaker IN (
+            'pinnacle','betonlineag','bookmaker','lowvig','draftkings','fanduel'
+          )
+        ORDER BY CASE bookmaker
+          WHEN 'pinnacle'   THEN 1 WHEN 'betonlineag' THEN 2
+          WHEN 'bookmaker'  THEN 3 WHEN 'lowvig'      THEN 4
+          WHEN 'draftkings' THEN 5 WHEN 'fanduel'     THEN 6 ELSE 7 END,
+          pulled_at DESC
+        LIMIT 1
+      ", list(row$game_id, row$market, row$outcome_name))$point,
+      error = function(e) NA_real_
+    )
+
+    if (length(current_pt) == 0 || is.na(current_pt)) {
+      message("[CLV] No line found for ", row$game_id,
+              " | ", row$market, " | ", row$outcome_name, " — skipping")
+      next
+    }
+
+    dbExecute(con, "
+      INSERT INTO clv_log (game_id, market, side, model_line, steam_direction)
+      VALUES (?, ?, ?, ?, ?)
+    ", list(row$game_id, row$market, row$outcome_name, current_pt, row$direction))
+
+    message("[CLV] Entry logged: ", row$game_id,
+            " | ", row$market, " | ", row$outcome_name,
+            " @ ", current_pt, " (steam ", row$direction, ")")
+  }
+
+  invisible(NULL)
+}
+
+# Settle open CLV entries once a closing snapshot exists.
+# CLV is signed by steam direction: positive means market kept moving post-entry.
+#   steam "down": model_line - closing_line  (you got a higher/better number)
+#   steam "up":   closing_line - model_line  (you got a lower/better number)
+compute_wnba_clv <- function(con) {
+  open <- tryCatch(
+    dbGetQuery(con, "
+      SELECT id, game_id, market, side, model_line, steam_direction
+      FROM clv_log WHERE closing_line IS NULL
+    ") |> as_tibble(),
+    error = function(e) tibble()
+  )
+
+  if (nrow(open) == 0) {
+    message("[CLV] No open entries to settle.")
+    return(invisible(NULL))
+  }
+
+  message("[CLV] Settling ", nrow(open), " open entries...")
+  n_settled <- 0L
+
+  for (i in seq_len(nrow(open))) {
+    row <- open[i, ]
+
+    closing_pt <- tryCatch(
+      dbGetQuery(con, "
+        SELECT point FROM lines
+        WHERE game_id = ? AND market = ? AND outcome_name = ?
+          AND snapshot_type = 'closing'
+          AND bookmaker IN (
+            'pinnacle','betonlineag','bookmaker','lowvig','draftkings','fanduel'
+          )
+        ORDER BY CASE bookmaker
+          WHEN 'pinnacle'   THEN 1 WHEN 'betonlineag' THEN 2
+          WHEN 'bookmaker'  THEN 3 WHEN 'lowvig'      THEN 4
+          WHEN 'draftkings' THEN 5 WHEN 'fanduel'     THEN 6 ELSE 7 END
+        LIMIT 1
+      ", list(row$game_id, row$market, row$side))$point,
+      error = function(e) NA_real_
+    )
+
+    if (length(closing_pt) == 0 || is.na(closing_pt)) next
+
+    clv <- if (identical(row$steam_direction, "down")) {
+      row$model_line - closing_pt
+    } else {
+      closing_pt - row$model_line
+    }
+
+    dbExecute(con, "
+      UPDATE clv_log SET closing_line = ?, clv = ? WHERE id = ?
+    ", list(closing_pt, clv, row$id))
+
+    n_settled <- n_settled + 1L
+    message("[CLV] Settled: ", row$game_id,
+            " | ", row$market, " | ", row$side,
+            " — entry ", row$model_line, " vs close ", closing_pt,
+            " → CLV ", ifelse(clv >= 0, "+", ""), round(clv, 2))
+  }
+
+  message("[CLV] Done — ", n_settled, " of ", nrow(open), " entries settled.")
+  invisible(n_settled)
+}
+
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 # Run a full collection pass for a given snapshot window.

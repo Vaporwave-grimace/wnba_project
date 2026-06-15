@@ -54,6 +54,13 @@ init_db <- function(path = DB_PATH) {
     message("[db_setup] Migrated steam_movements: added outcome_name column")
   }
 
+  # Idempotent migration: add steam_direction to clv_log for directional CLV computation
+  clv_cols <- dbListFields(con, "clv_log")
+  if (!"steam_direction" %in% clv_cols) {
+    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN steam_direction TEXT")
+    message("[db_setup] Migrated clv_log: added steam_direction column")
+  }
+
   # ── Roster / stats tables ─────────────────────────────────────────────────────
 
   # Season game log — one row per team per game

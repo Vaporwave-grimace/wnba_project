@@ -120,6 +120,8 @@ alert_steam_flags <- function(steam_df, creds, con) {
     safe_run(send_discord(msg,  creds), paste("steam discord alert",  i))
     Sys.sleep(1)
   }
+
+  safe_run(record_clv_entry(steam_df, con), "CLV entry logging")
 }
 
 # ── Step 1: Open snapshot (once, ~9 AM ET) ────────────────────────────────────
@@ -194,6 +196,7 @@ if (length(near_tip_games) > 0) {
     log_info("Fetching closing snapshot for ", length(pending), " game(s)")
     closing_result <- safe_run(run_collection("closing", con, compare_to = "midday"), "closing snapshot")
     alert_steam_flags(closing_result$steam, creds, con)
+    safe_run(compute_wnba_clv(con), "CLV settlement")
   } else {
     log_info("Closing already captured for all near-tip games, skipping")
   }

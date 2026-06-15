@@ -35,7 +35,18 @@
 - All prior blockers resolved — see Recent Session Summary below.
 - Next focus: steam detection quality (0 flags despite live action — check threshold calibration and whether line movement data is populating); shadow model predictions logging against closing lines for CLV tracking.
 
-## Recent Session Summary (2026-06-14, Session 2)
+## Recent Session Summary (2026-06-14, Session 3)
+
+- **CLV tracking wired up** — steam flags now write to `clv_log` as simulated bet entries; closing snapshot settles open entries and computes directional CLV
+  - `record_clv_entry(steam_df, con)` in `odds_ingest.R` — logs current (post-steam) Pinnacle-first line as `model_line`; idempotent (skips if already logged for that game/market/side); stores `steam_direction` for correct sign convention
+  - `compute_wnba_clv(con)` in `odds_ingest.R` — joins open `clv_log` entries to closing snapshot; CLV = `model_line − closing_line` for "down" steam, `closing_line − model_line` for "up" steam (positive = beat the close)
+  - `alert_steam_flags()` in `run_pipeline.R` — calls `record_clv_entry()` after alerts sent
+  - Closing snapshot step in `run_pipeline.R` — calls `compute_wnba_clv()` after closing is captured
+  - `db_setup.R` — idempotent migration adds `steam_direction TEXT` to `clv_log`
+- **Data flow:** steam fires → entry logged at current line → closing snapshot captured pre-tip → CLV settled; all in `clv_log`
+- **Note:** CLV accumulates only when steam is detected; zero-steam days produce no entries (correct — no signal, no simulated bet)
+
+## Previous Session Summary (2026-06-14, Session 2)
 
 - **Heartbeat message overhauled** — replaced count-only summary with actionable data:
   - **Game slate:** shows each matchup (Away @ Home), tip time ET, favored team + spread, o/u total pulled from latest snapshot (Pinnacle-first book preference)
