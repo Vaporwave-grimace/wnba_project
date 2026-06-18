@@ -31,6 +31,7 @@ source(here("scripts", "wnba_stats_api.R"))
 source(here("scripts", "injury_alert.R"))
 source(here("scripts", "shadow_model", "features.R"))
 source(here("scripts", "shadow_model", "predict.R"))
+source(here("scripts", "bet_alerts.R"))
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -264,11 +265,28 @@ if (file.exists(here("models", "totals_xgb.rds"))) {
     )
 
     walk(seq_len(nrow(steam_today)), function(i) {
-      safe_run(
+      pred <- safe_run(
         run_prediction(steam_today$game_id[i], steam_today[i, ], con,
                        team_box = team_box_cache),
         paste("shadow model prediction for", steam_today$game_id[i])
       )
+
+      if (!is.null(pred) && nrow(pred) > 0) {
+        for (j in seq_len(nrow(pred))) {
+          safe_run(
+            emit_wnba_bet_alert(
+              game_id    = pred$game_id[j],
+              market     = pred$market[j],
+              side       = pred$side[j],
+              model_line = pred$model_line[j],
+              mkt_line   = pred$market_line_at_bet[j],
+              con        = con,
+              creds      = creds
+            ),
+            paste("bet alert for", pred$game_id[j], pred$market[j])
+          )
+        }
+      }
     })
   }
 } else {
