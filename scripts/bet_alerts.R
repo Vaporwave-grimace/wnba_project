@@ -38,6 +38,15 @@ MIN_EV_PCT <- 3.0
   else          as.integer(round((1 - p) / p * 100))
 }
 
+# Half Kelly by default — full Kelly is too aggressive on an uncalibrated model.
+# Returns the fraction of bankroll to risk (0 if edge is negative).
+.kelly_fraction <- function(model_prob, odds, fraction = 0.5) {
+  if (anyNA(c(model_prob, odds)) || model_prob <= 0 || model_prob >= 1) return(0)
+  b <- if (odds > 0) odds / 100 else 100 / abs(odds)  # net decimal odds
+  f <- (model_prob * b - (1 - model_prob)) / b
+  max(0, min(1, f)) * fraction
+}
+
 # Best available line for a specific market + outcome_name, from the most
 # recent snapshot for the game.  Returns list(book, odds, point).
 .best_book_odds <- function(game_id, market, outcome_name, con) {
@@ -134,9 +143,10 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
 
   # ── EV filter ────────────────────────────────────────────────────────────────
 
-  implied_prob <- .american_to_prob(bo$odds)
-  ev_pct       <- (model_prob - implied_prob) / implied_prob * 100
-  fair_odds    <- .prob_to_american(model_prob)
+  implied_prob  <- .american_to_prob(bo$odds)
+  ev_pct        <- (model_prob - implied_prob) / implied_prob * 100
+  fair_odds     <- .prob_to_american(model_prob)
+  kelly         <- .kelly_fraction(model_prob, bo$odds)
 
   if (is.na(ev_pct) || ev_pct < MIN_EV_PCT) {
     message(sprintf("[bet_alerts/WNBA] %s %s %s — EV=%.1f%% below threshold (%.1f%%)",
@@ -208,11 +218,12 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
                   game_id, play, ev_pct))
 
   write_wnba_bet_history(
-    game_date  = game_date,
-    away_team  = away_team,
-    home_team  = home_team,
-    bet_side   = play,
-    bet_amount = 1.0   # flat unit — no Kelly sizing yet
+    game_date      = game_date,
+    away_team      = away_team,
+    home_team      = home_team,
+    bet_side       = play,
+    kelly_fraction = kelly,
+    bet_amount     = kelly * 100   # Kelly units (bankroll = 100)
   )
 
   invisible(msg)
@@ -221,18 +232,20 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
 # ── BET_HISTORY CSV ───────────────────────────────────────────────────────────
 
 write_wnba_bet_history <- function(game_date, away_team, home_team,
-                                   bet_side, bet_amount = 1.0) {
+                                   bet_side, kelly_fraction = 0,
+                                   bet_amount = kelly_fraction * 100) {
   dir.create(WNBA_EXPORTS_DIR, showWarnings = FALSE, recursive = TRUE)
   date_str <- format(as.Date(game_date), "%Y%m%d")
   csv_path <- file.path(WNBA_EXPORTS_DIR,
                         paste0("BET_HISTORY_WNBA_", date_str, ".csv"))
 
   row <- data.frame(
-    away_team  = away_team,
-    home_team  = home_team,
-    game_date  = as.character(game_date),
-    bet_side   = bet_side,
-    bet_amount = bet_amount,
+    away_team      = away_team,
+    home_team      = home_team,
+    game_date      = as.character(game_date),
+    bet_side       = bet_side,
+    kelly_fraction = round(kelly_fraction, 4),
+    bet_amount     = round(bet_amount, 2),
     stringsAsFactors = FALSE
   )
 
