@@ -29,11 +29,35 @@
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
-## Current State Note (2026-06-14)
+## Current State Note (2026-06-19)
+
+- **`wnba_settle.R` added** — populates `game_outcomes` from Odds API scores; wired into 9 AM opener step in `run_pipeline.R`. 8 games written on first backfill run; table now at 958 rows (950 training + 8 live).
+- **`game_outcomes` daysFrom limit = 3** — Odds API returns 422 for `daysFrom > 3`. Default `SCORES_DAYS_BACK = 3L` is correct. Do not pass higher values in manual calls.
+- **bet_router settler can now settle WNBA bets** once WNBA alerts start posting to `#auto-bet-broadcast`. Settlement joins `open_bets` → `game_outcomes` on `game_id` (Odds API hex format matches both endpoints).
+- **WNBA bet-sizing/alerts not yet live** — XGBoost models trained but no bet-sizing or alert output wired yet. bet_router WNBA settler stub remains dormant until this is built.
+
+## Previous State Note (2026-06-14)
 
 - **Pipeline fully operational.** Telegram heartbeat confirmed firing: 6 games tracked Jun 14.
 - All prior blockers resolved — see Recent Session Summary below.
 - Next focus: steam detection quality (0 flags despite live action — check threshold calibration and whether line movement data is populating); shadow model predictions logging against closing lines for CLV tracking.
+
+## Session Summary (2026-06-19, Session 4 — Cross-Pipeline Integration)
+
+### `scripts/wnba_settle.R` (new)
+
+Populates `game_outcomes` from Odds API `/sports/basketball_wnba/scores` endpoint so `settle_wnba_bets()` in bet_router can join on `game_id` (same hex format used in the events/lines endpoints).
+
+- `wnba_settle_run(con, days_from = SCORES_DAYS_BACK)` — fetches completed games, writes `(game_id, game_date, home_team_id, away_team_id, home_score, away_score, actual_total, actual_spread, season)` via `INSERT OR IGNORE` on `game_id` PK
+- `SCORES_DAYS_BACK = 3L` — **Odds API returns 422 for `daysFrom > 3`**; do not pass higher values
+- Requires `key_state$init(creds)` before calling standalone (same as all `odds_request()` calls)
+- Wired into `run_pipeline.R` 9 AM opener step, before line collection
+
+### `game_outcomes` backfill (2026-06-19)
+
+Manual run: `wnba_settle_run(con, days_from=3L)` → 8 new games written; table now 958 rows.
+
+---
 
 ## Recent Session Summary (2026-06-14, Session 3)
 
