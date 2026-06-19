@@ -32,6 +32,7 @@ source(here("scripts", "injury_alert.R"))
 source(here("scripts", "shadow_model", "features.R"))
 source(here("scripts", "shadow_model", "predict.R"))
 source(here("scripts", "bet_alerts.R"))
+source(here("scripts", "wnba_settle.R"))
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -110,7 +111,16 @@ alert_steam_flags <- function(steam_df, creds, con) {
   )
 
   for (i in seq_len(nrow(steam_df))) {
-    row  <- steam_df[i, ]
+    row <- steam_df[i, ]
+
+    # Dedup gate — only alert once per (game, market, outcome, direction)
+    new_steam <- tryCatch(
+      is_new_steam(con, row$game_id, row$market, row$outcome_name,
+                   row$direction, row$magnitude, row$books_moved),
+      error = function(e) TRUE  # fail open: alert if dedup check errors
+    )
+    if (!new_steam) next
+
     meta <- game_meta |> filter(game_id == row$game_id)
     msg  <- format_steam_alert(
       row,
@@ -137,6 +147,9 @@ if (near_hour(OPEN_HOUR)) {
   ", list(today_str))$n
 
   if (opener_count == 0) {
+    log_info("OPEN window — settling yesterday's completed games")
+    safe_run(wnba_settle_run(con), "WNBA score settlement")
+
     log_info("OPEN window — fetching opener snapshot")
     opener_result <- safe_run(run_collection("opener", con), "opener snapshot")
 
@@ -197,6 +210,8 @@ if (length(near_tip_games) > 0) {
     log_info("Fetching closing snapshot for ", length(pending), " game(s)")
     closing_result <- safe_run(run_collection("closing", con, compare_to = "midday"), "closing snapshot")
     alert_steam_flags(closing_result$steam, creds, con)
+    # Resolve steam dedup entries so they don't carry across invocations
+    walk(near_tip_games, function(gid) resolve_steam(con, gid))
     safe_run(compute_wnba_clv(con), "CLV settlement")
   } else {
     log_info("Closing already captured for all near-tip games, skipping")
@@ -381,8 +396,10 @@ if (!is.null(latest_snap_type) && length(latest_snap_type) > 0) {
 # ── 2. Steam details ──────────────────────────────────────────────────────────
 
 steam_count <- tryCatch(
-  dbGetQuery(con, "SELECT COUNT(*) AS n FROM steam_movements WHERE DATE(detected_at) = ?",
-             list(today_str))$n,
+  dbGetQuery(con, "
+    SELECT COUNT(*) AS n FROM steam_log
+    WHERE DATE(first_detected) = ? AND alert_sent = 1
+  ", list(today_str))$n,
   error = function(e) 0L
 )
 
@@ -392,11 +409,12 @@ steam_msg <- if (steam_count > 0) {
       SELECT s.market, s.outcome_name, s.direction,
              ROUND(s.magnitude, 1) AS magnitude, s.books_moved,
              l.home_team, l.away_team
-      FROM steam_movements s
+      FROM steam_log s
       LEFT JOIN (SELECT DISTINCT game_id, home_team, away_team FROM lines) l
         ON l.game_id = s.game_id
-      WHERE DATE(s.detected_at) = ?
-      ORDER BY s.detected_at DESC
+      WHERE DATE(s.first_detected) = ?
+        AND s.alert_sent = 1
+      ORDER BY s.first_detected DESC
     ", list(today_str)) |> as_tibble(),
     error = function(e) tibble()
   )
