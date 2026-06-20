@@ -118,9 +118,33 @@ build_historical_training_set <- function(con, team_box) {
       steam_detected    = NA_real_,
       steam_magnitude   = NA_real_,
       steam_books_moved = NA_real_,
+      closing_line      = NA_real_,
       injury_flag_home  = 0L,
       injury_flag_away  = 0L
     )
+
+  # Pull OddsPortal closing totals for historical games.
+  # Populated by oddsportal_scraper.R — NA until that backfill runs.
+  op_closing <- tryCatch(
+    dbGetQuery(con, "
+      SELECT game_id, AVG(point) AS closing_line
+      FROM lines
+      WHERE snapshot_type = 'closing'
+        AND bookmaker     = 'oddsportal'
+        AND market        = 'totals'
+      GROUP BY game_id
+    ") |> as_tibble(),
+    error = function(e) tibble(game_id = character(), closing_line = numeric())
+  )
+
+  if (nrow(op_closing) > 0L) {
+    features <- features |>
+      left_join(op_closing |> rename(op_total = closing_line), by = "game_id") |>
+      mutate(closing_line = coalesce(op_total, closing_line)) |>
+      select(-op_total)
+    message("  OddsPortal closing lines: ",
+            sum(!is.na(features$closing_line)), " of ", nrow(features), " games")
+  }
 
   message("  Feature set: ", nrow(features), " games, ",
           sum(!is.na(features$home_on_off_delta)), " with on/off data, ",
@@ -153,7 +177,7 @@ message("Training set: ", nrow(training_raw), " games")
 # ── Shared predictor columns ──────────────────────────────────────────────────
 
 PREDICTORS <- c(
-  "opener_line", "midday_line",
+  "opener_line", "midday_line", "closing_line",
   "delta_open_mid", "delta_mid_close", "delta_open_close",
   "line_velocity",
   "steam_detected", "steam_magnitude", "steam_books_moved",

@@ -30,7 +30,7 @@ market_features <- function(game_id, con) {
     FROM lines
     WHERE game_id = ?
       AND market IN ('totals', 'spreads')
-      AND bookmaker IN ('pinnacle','betonlineag','lowvig','fanduel','draftkings')
+      AND bookmaker IN ('pinnacle','betonlineag','lowvig','fanduel','draftkings','oddsportal')
     ORDER BY pulled_at
   ", list(game_id)) |> as_tibble()
 

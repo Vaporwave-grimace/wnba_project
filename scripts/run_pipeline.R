@@ -221,8 +221,6 @@ if (length(near_tip_games) > 0) {
     log_info("Fetching closing snapshot for ", length(pending), " game(s)")
     closing_result <- safe_run(run_collection("closing", con, compare_to = "midday"), "closing snapshot")
     alert_steam_flags(closing_result$steam, creds, con)
-    # Resolve steam dedup entries so they don't carry across invocations
-    walk(near_tip_games, function(gid) resolve_steam(con, gid))
     safe_run(compute_wnba_clv(con), "CLV settlement")
   } else {
     log_info("Closing already captured for all near-tip games, skipping")
@@ -272,6 +270,12 @@ continuous_steam <- tryCatch({
   tibble()
 })
 
+# Resolve steam dedup entries for games that just closed — runs after Step 3b
+# so the dedup gate blocks re-detection within the same invocation.
+if (length(near_tip_games) > 0) {
+  walk(near_tip_games, function(gid) resolve_steam(con, gid))
+}
+
 # ── Step 4: Shadow model — predict on steam flags ─────────────────────────────
 
 # If steam was detected this run, fire predictions for each flagged game.
@@ -282,7 +286,9 @@ if (file.exists(here("models", "totals_xgb.rds"))) {
     FROM steam_movements
     WHERE DATE(detected_at) = ?
     ORDER BY detected_at DESC
-  ", list(format(now_et(), "%Y-%m-%d"))) |> as_tibble()
+  ", list(format(now_et(), "%Y-%m-%d"))) |>
+    as_tibble() |>
+    distinct(game_id, .keep_all = TRUE)
 
   if (nrow(steam_today) > 0) {
     team_box_cache <- safe_run(
@@ -430,14 +436,42 @@ steam_msg <- if (steam_count > 0) {
     error = function(e) tibble()
   )
   if (nrow(steam_rows) > 0) {
-    lines_out <- vapply(seq_len(nrow(steam_rows)), function(i) {
-      r       <- steam_rows[i, ]
-      matchup <- if (!is.na(r$home_team)) paste0(r$away_team, " @ ", r$home_team) else "Unknown"
-      arrow   <- if (identical(r$direction, "up")) "↑" else "↓"
-      paste0("  • ", matchup, " | ", r$market, " ", arrow,
-             r$magnitude, "pts | ", r$books_moved, " books")
+    # Group by matchup+market; flag when both ↑ and ↓ detected (book disagreement)
+    lines_out <- steam_rows |>
+      dplyr::group_by(home_team, away_team, market) |>
+      dplyr::summarise(
+        directions = paste(sort(unique(direction)), collapse = "+"),
+        mag_up     = max(magnitude[direction == "up"],   na.rm = TRUE),
+        mag_dn     = max(magnitude[direction == "down"], na.rm = TRUE),
+        books      = max(books_moved),
+        .groups = "drop"
+      ) |>
+      dplyr::mutate(
+        matchup     = ifelse(!is.na(home_team),
+                             paste0(away_team, " @ ", home_team), "Unknown"),
+        conflict    = grepl("up", directions) & grepl("down", directions),
+        line_str    = dplyr::case_when(
+          conflict ~ sprintf("⚡ CONFLICT ↑%.1fpts / ↓%.1fpts | %d books split",
+                             mag_up, mag_dn, books),
+          grepl("up",   directions) ~ sprintf("↑%.1fpts | %d books", mag_up, books),
+          grepl("down", directions) ~ sprintf("↓%.1fpts | %d books", mag_dn, books),
+          TRUE ~ "?"
+        )
+      ) |>
+      dplyr::arrange(dplyr::desc(conflict), matchup)
+
+    bullets <- vapply(seq_len(nrow(lines_out)), function(i) {
+      r <- lines_out[i, ]
+      paste0("  • ", r$matchup, " | ", r$market, " ", r$line_str)
     }, character(1))
-    paste0("\U0001f525 *Steam (", steam_count, ")*\n", paste(lines_out, collapse = "\n"))
+
+    n_conflict <- sum(lines_out$conflict)
+    header_tag <- if (n_conflict > 0)
+      sprintf("Steam (%d, %d⚡ conflict)", nrow(lines_out), n_conflict)
+    else
+      sprintf("Steam (%d)", nrow(lines_out))
+
+    paste0("\U0001f525 *", header_tag, "*\n", paste(bullets, collapse = "\n"))
   } else "\U0001f525 No steam today"
 } else "\U0001f525 No steam today"
 

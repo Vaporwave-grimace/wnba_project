@@ -287,14 +287,33 @@ send_telegram <- function(message_text, creds) {
   invisible(FALSE)
 }
 
-send_discord <- function(message_text, creds) {
+send_discord <- function(message_text, creds,
+                         channel_id = "1499488823598387412") {
   if (!nzchar(message_text %||% "")) {
     message("[send_discord] Skipping empty message.")
     return(invisible(FALSE))
   }
-  # Discord webhook: 2000-char limit
+  # Discord 2000-char limit
   if (nchar(message_text) > 1990L) {
     message_text <- paste0(substr(message_text, 1L, 1987L), "...")
+  }
+
+  # Prefer bot token (shows as WNBA bot); fall back to webhook
+  if (!is.null(creds$discord_bot_token)) {
+    resp <- request(paste0("https://discord.com/api/v10/channels/",
+                           channel_id, "/messages")) |>
+      req_headers(Authorization  = paste("Bot", creds$discord_bot_token),
+                  `Content-Type` = "application/json") |>
+      req_body_json(list(content = message_text)) |>
+      req_error(is_error = \(r) FALSE) |>
+      req_perform()
+
+    if (resp_status(resp) %in% c(200L, 204L)) {
+      message("[send_discord] Alert sent (bot).")
+      return(invisible(TRUE))
+    }
+    message("[send_discord] Bot post failed (HTTP ", resp_status(resp),
+            ") — falling back to webhook")
   }
 
   resp <- request(creds$discord_webhook_url) |>
@@ -303,7 +322,7 @@ send_discord <- function(message_text, creds) {
     req_perform()
 
   if (resp_status(resp) %in% c(200L, 204L)) {
-    message("[send_discord] Alert sent.")
+    message("[send_discord] Alert sent (webhook).")
     return(invisible(TRUE))
   }
 
