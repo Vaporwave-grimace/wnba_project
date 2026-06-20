@@ -385,6 +385,68 @@ compute_wnba_clv <- function(con) {
   invisible(n_settled)
 }
 
+# ── Steam Dedup Helpers ───────────────────────────────────────────────────────
+
+# Returns TRUE and inserts a steam_log entry if this is a new move.
+# Returns FALSE and updates last_seen if the move was already alerted.
+# Called before firing any alert so each (game, market, outcome, direction)
+# only triggers one Telegram/Discord message per game lifetime.
+is_new_steam <- function(con, game_id, market, outcome_name, direction,
+                         magnitude, books_moved) {
+  existing <- tryCatch(
+    dbGetQuery(con, "
+      SELECT id FROM steam_log
+      WHERE  game_id      = ?
+      AND    market       = ?
+      AND    outcome_name = ?
+      AND    direction    = ?
+      AND    resolved     = 0
+    ", list(game_id, market, outcome_name, direction)),
+    error = function(e) data.frame()
+  )
+
+  if (nrow(existing) == 0) {
+    tryCatch(
+      dbExecute(con, "
+        INSERT OR IGNORE INTO steam_log
+          (game_id, market, outcome_name, direction, magnitude, books_moved,
+           first_detected, last_seen, alert_sent)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)
+      ", list(game_id, market, outcome_name, direction, magnitude, books_moved)),
+      error = function(e) NULL
+    )
+    return(TRUE)
+  }
+
+  # Already seen — update last_seen and keep the largest magnitude seen
+  tryCatch(
+    dbExecute(con, "
+      UPDATE steam_log
+      SET    last_seen = datetime('now'),
+             magnitude = CASE WHEN ? > magnitude THEN ? ELSE magnitude END
+      WHERE  game_id      = ?
+      AND    market       = ?
+      AND    outcome_name = ?
+      AND    direction    = ?
+      AND    resolved     = 0
+    ", list(magnitude, magnitude, game_id, market, outcome_name, direction)),
+    error = function(e) NULL
+  )
+  FALSE
+}
+
+# Mark all open steam_log entries for a game as resolved.
+# Call when a game's closing snapshot fires so stale entries don't carry over.
+resolve_steam <- function(con, game_id) {
+  tryCatch(
+    dbExecute(con, "
+      UPDATE steam_log SET resolved = 1 WHERE game_id = ?
+    ", list(game_id)),
+    error = function(e) NULL
+  )
+  invisible(NULL)
+}
+
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 # Run a full collection pass for a given snapshot window.

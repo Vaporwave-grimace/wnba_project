@@ -4,7 +4,7 @@
 # All other scripts source this file for consistent logging.
 
 LOG_DIR  <- here::here("logs")
-LOG_FILE <- file.path(LOG_DIR, "pipeline.log")
+LOG_FILE <- file.path(LOG_DIR, format(Sys.Date(), "%Y-%m-%d.log"))
 
 dir.create(LOG_DIR, showWarnings = FALSE, recursive = TRUE)
 

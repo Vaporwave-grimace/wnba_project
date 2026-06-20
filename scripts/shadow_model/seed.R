@@ -23,7 +23,7 @@ source(here("scripts", "db_setup.R"))
 source(here("scripts", "wnba_stats_api.R"))
 
 DB_PATH <- here("data", "wnba_pipeline.sqlite")
-SEASONS <- c(2023L, 2024L, 2025L)
+SEASONS <- c(2023L, 2024L, 2025L, 2026L)
 
 `%!in%` <- Negate(`%in%`)
 

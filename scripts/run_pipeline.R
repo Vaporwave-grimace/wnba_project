@@ -37,14 +37,16 @@ source(here("scripts", "wnba_settle.R"))
 # ── Config ────────────────────────────────────────────────────────────────────
 
 TZ_LOCAL        <- "America/New_York"
-OPEN_HOUR       <- 9L    # 9:00 AM ET — open snapshot
-MIDDAY_HOUR     <- 13L   # 1:00 PM ET — midday snapshot
+SETTLE_HOUR     <- 10L   # 10:00 AM ET — settlement + on/off refresh (no odds)
+OPEN_HOUR       <- 15L   # 3:00 PM ET — opener odds snapshot (WNBA books post by ~2-3 PM ET)
+MIDDAY_HOUR     <- 17L   # 5:00 PM ET — midday odds snapshot (2 hrs before typical tip)
 PRE_TIP_MINS    <- 70L   # minutes before tip-off to take closing snapshot
 SEASON          <- as.integer(format(Sys.Date(), "%Y"))
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 log_info("──────────────────────────────────────────")
+log_info("WNBA pipeline started")
 log_info("Pipeline invoked at", format(now("UTC"), "%Y-%m-%d %H:%M:%S"), "UTC")
 
 # Load credentials and initialize key state
@@ -135,10 +137,38 @@ alert_steam_flags <- function(steam_df, creds, con) {
   safe_run(record_clv_entry(steam_df, con), "CLV entry logging")
 }
 
-# ── Step 1: Open snapshot (once, ~9 AM ET) ────────────────────────────────────
+# ── Step 0: Morning settlement + on/off refresh (10 AM ET, no odds) ──────────
+#
+# Decoupled from odds collection so settlement runs early regardless of when
+# WNBA books post lines (typically 2-3 PM ET, too late for a 10 AM opener).
+
+if (near_hour(SETTLE_HOUR)) {
+  log_info("MORNING — settling yesterday's completed games")
+  safe_run(wnba_settle_run(con), "WNBA score settlement")
+
+  log_info("MORNING — refreshing on/off net ratings")
+  teams <- safe_run(
+    dbGetQuery(con, "SELECT DISTINCT team_id FROM game_log") |>
+      pull(team_id),
+    "fetch team list"
+  )
+
+  if (!is.null(teams) && length(teams) > 0) {
+    walk(teams, function(tid) {
+      result <- safe_run(compute_on_off_net_rating(tid, SEASON),
+                         paste("on/off for team", tid))
+      if (!is.null(result)) safe_run(write_on_off_to_db(result, con),
+                                     paste("write on/off for team", tid))
+    })
+  }
+}
+
+# ── Step 1: Opener odds snapshot (3 PM ET) ───────────────────────────────────
+#
+# WNBA books typically post same-day lines by 2-3 PM ET. Running at 3 PM
+# ensures a populated baseline for the 5 PM midday steam comparison.
 
 if (near_hour(OPEN_HOUR)) {
-  # Guard: skip if we already have an opener for today
   today_str    <- format(now_et(), "%Y-%m-%d")
   opener_count <- dbGetQuery(con, "
     SELECT COUNT(*) AS n FROM lines
@@ -147,33 +177,14 @@ if (near_hour(OPEN_HOUR)) {
   ", list(today_str))$n
 
   if (opener_count == 0) {
-    log_info("OPEN window — settling yesterday's completed games")
-    safe_run(wnba_settle_run(con), "WNBA score settlement")
-
     log_info("OPEN window — fetching opener snapshot")
     opener_result <- safe_run(run_collection("opener", con), "opener snapshot")
-
-    log_info("OPEN window — refreshing on/off net ratings")
-    teams <- safe_run(
-      dbGetQuery(con, "SELECT DISTINCT team_id FROM game_log") |>
-        pull(team_id),
-      "fetch team list"
-    )
-
-    if (!is.null(teams) && length(teams) > 0) {
-      walk(teams, function(tid) {
-        result <- safe_run(compute_on_off_net_rating(tid, SEASON),
-                           paste("on/off for team", tid))
-        if (!is.null(result)) safe_run(write_on_off_to_db(result, con),
-                                       paste("write on/off for team", tid))
-      })
-    }
   } else {
     log_info("OPEN window — opener already captured today, skipping")
   }
 }
 
-# ── Step 2: Midday snapshot (~1 PM ET) ───────────────────────────────────────
+# ── Step 2: Midday odds snapshot (5 PM ET) ───────────────────────────────────
 
 if (near_hour(MIDDAY_HOUR)) {
   today_str     <- format(now_et(), "%Y-%m-%d")

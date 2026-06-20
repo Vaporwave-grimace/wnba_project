@@ -54,6 +54,30 @@ init_db <- function(path = DB_PATH) {
     message("[db_setup] Migrated steam_movements: added outcome_name column")
   }
 
+  # Steam dedup log — one row per (game, market, outcome, direction) while unresolved.
+  # Prevents re-alerting the same move on every 30-min poll cycle.
+  # Resolved when closing snapshot fires for that game.
+  dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS steam_log (
+      id              INTEGER PRIMARY KEY,
+      game_id         TEXT,
+      market          TEXT,
+      outcome_name    TEXT,
+      direction       TEXT,
+      magnitude       REAL,
+      books_moved     INTEGER,
+      first_detected  TEXT,
+      last_seen       TEXT,
+      alert_sent      INTEGER DEFAULT 0,
+      resolved        INTEGER DEFAULT 0
+    )
+  ")
+  dbExecute(con, "
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_steam_log_dedup
+    ON steam_log (game_id, market, outcome_name, direction)
+    WHERE resolved = 0
+  ")
+
   # Idempotent migration: add steam_direction to clv_log for directional CLV computation
   clv_cols <- dbListFields(con, "clv_log")
   if (!"steam_direction" %in% clv_cols) {

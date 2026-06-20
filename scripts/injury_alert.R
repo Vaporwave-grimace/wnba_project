@@ -247,6 +247,10 @@ check_discrepancies <- function(new_injuries, con) {
 # ── Alert Layer ───────────────────────────────────────────────────────────────
 
 send_telegram <- function(message_text, creds) {
+  if (!nzchar(message_text %||% "")) {
+    message("[send_telegram] Skipping empty message.")
+    return(invisible(FALSE))
+  }
   token   <- creds$telegram_bot_token
   chat_id <- creds$telegram_chat_id
 
@@ -256,27 +260,55 @@ send_telegram <- function(message_text, creds) {
       text       = message_text,
       parse_mode = "Markdown"
     )) |>
-    req_retry(max_tries = 3) |>
+    req_error(is_error = \(r) FALSE) |>
     req_perform()
 
-  if (resp_status(resp) == 200) {
-    message("Telegram alert sent.")
-  } else {
-    warning("Telegram alert failed: ", resp_status(resp))
+  if (resp_status(resp) == 200L) {
+    message("[send_telegram] Alert sent.")
+    return(invisible(TRUE))
   }
+
+  # Markdown parse error — retry as plain text (symbols appear literally, acceptable)
+  if (resp_status(resp) == 400L) {
+    message("[send_telegram] Markdown rejected (400) — retrying as plain text.")
+    resp2 <- request(paste0("https://api.telegram.org/bot", token, "/sendMessage")) |>
+      req_body_json(list(chat_id = chat_id, text = message_text)) |>
+      req_error(is_error = \(r) FALSE) |>
+      req_perform()
+    if (resp_status(resp2) == 200L) {
+      message("[send_telegram] Alert sent (plain text fallback).")
+      return(invisible(TRUE))
+    }
+    message("[send_telegram] Plain text fallback also failed: HTTP ", resp_status(resp2))
+    return(invisible(FALSE))
+  }
+
+  message("[send_telegram] Alert failed: HTTP ", resp_status(resp))
+  invisible(FALSE)
 }
 
 send_discord <- function(message_text, creds) {
+  if (!nzchar(message_text %||% "")) {
+    message("[send_discord] Skipping empty message.")
+    return(invisible(FALSE))
+  }
+  # Discord webhook: 2000-char limit
+  if (nchar(message_text) > 1990L) {
+    message_text <- paste0(substr(message_text, 1L, 1987L), "...")
+  }
+
   resp <- request(creds$discord_webhook_url) |>
     req_body_json(list(content = message_text)) |>
-    req_retry(max_tries = 3) |>
+    req_error(is_error = \(r) FALSE) |>
     req_perform()
 
-  if (resp_status(resp) %in% c(200, 204)) {
-    message("Discord alert sent.")
-  } else {
-    warning("Discord alert failed: ", resp_status(resp))
+  if (resp_status(resp) %in% c(200L, 204L)) {
+    message("[send_discord] Alert sent.")
+    return(invisible(TRUE))
   }
+
+  message("[send_discord] Alert failed: HTTP ", resp_status(resp))
+  invisible(FALSE)
 }
 
 # Format a discrepancy row into a human-readable alert string

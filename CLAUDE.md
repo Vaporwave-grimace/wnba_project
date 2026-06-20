@@ -29,12 +29,41 @@
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
-## Current State Note (2026-06-19)
+## Current State Note (2026-06-20)
 
-- **`wnba_settle.R` added** — populates `game_outcomes` from Odds API scores; wired into 9 AM opener step in `run_pipeline.R`. 8 games written on first backfill run; table now at 958 rows (950 training + 8 live).
-- **`game_outcomes` daysFrom limit = 3** — Odds API returns 422 for `daysFrom > 3`. Default `SCORES_DAYS_BACK = 3L` is correct. Do not pass higher values in manual calls.
-- **bet_router settler can now settle WNBA bets** once WNBA alerts start posting to `#auto-bet-broadcast`. Settlement joins `open_bets` → `game_outcomes` on `game_id` (Odds API hex format matches both endpoints).
-- **WNBA bet-sizing/alerts not yet live** — XGBoost models trained but no bet-sizing or alert output wired yet. bet_router WNBA settler stub remains dormant until this is built.
+- **`bet_alerts.R` is live and wired** — `emit_wnba_bet_alert()` has full Kelly sizing (half-Kelly) + `emit_broadcast()` + BET_HISTORY CSV. Sourced in `run_pipeline.R` at startup; called from Step 4 after `run_prediction()` on every steam flag. The bet chain is complete and ready to fire.
+- **Steam not yet detected** — Root cause: WNBA books don't post same-day lines until ~2-3 PM ET. Old `OPEN_HOUR = 10L` captured 0 rows from the API; no opener baseline → no steam comparison. Fixed (Session 5): `OPEN_HOUR = 15L` (3 PM ET), `MIDDAY_HOUR = 17L` (5 PM ET), `SETTLE_HOUR = 10L` (morning settlement decoupled from odds collection). First real steam opportunity: Mon Jun 22 pipeline run.
+- **`send_telegram`/`send_discord` 400 fix** — Added `req_error(is_error = \(r) FALSE)` to both functions; Telegram now falls back to plain text on 400 instead of throwing. Root cause of Jun 16-17 monitor errors (22 ERR): markdown parse failure on specific game spread data. Monitor clean since Jun 18.
+- **`wnba_settle.R` added** — populates `game_outcomes` from Odds API scores; settlement decoupled to `SETTLE_HOUR = 10L` in `run_pipeline.R`. Table at 958 rows (950 training + 8 live); daily runs maintain it.
+- **`game_outcomes` daysFrom limit = 3** — Odds API returns 422 for `daysFrom > 3`. Default `SCORES_DAYS_BACK = 3L` is correct.
+- **bet_router settler wired** — `settle_wnba_bets()` joins `open_bets → game_outcomes` on `game_id`. Will activate on first real WNBA alert.
+
+## Session Summary (2026-06-20, Session 5 — Steam Timing + Alert Fixes)
+
+### `scripts/run_pipeline.R` — Collection window timing fix
+
+WNBA books don't post same-day lines until ~2-3 PM ET. Previous `OPEN_HOUR = 10L` (10 AM) got 0 rows from Odds API every run → no steam baseline → steam detection never fired.
+
+**Changes:**
+- `SETTLE_HOUR = 10L` (new) — morning settlement + on/off refresh, no odds collection
+- `OPEN_HOUR = 15L` (was 10L) — opener odds snapshot at 3 PM ET
+- `MIDDAY_HOUR = 17L` (was 13L) — midday odds snapshot at 5 PM ET
+- Step 0 added — morning-only block at `SETTLE_HOUR`: runs `wnba_settle_run()` + on/off ratings
+- Step 1 simplified — only fetches opener odds (settlement removed)
+
+Steam detection windows now: opener (3 PM) → midday (5 PM) → closing (~6:20 PM for 7:30 PM tips).
+
+### `scripts/injury_alert.R` — `send_telegram` + `send_discord` 400 fix
+
+Root cause of 22 ERR on Jun 16-17: `send_telegram` used `req_perform()` without `req_error(is_error = \(r) FALSE)`, so Telegram 400 (Markdown parse failure on game spread data) threw an R error → `safe_run()` caught it → `[ERROR]` log line → monitor alarm.
+
+**Changes:**
+- Both functions: added `req_error(is_error = \(r) FALSE)` — 4xx no longer throws
+- `send_telegram`: on 400, retries without `parse_mode` (plain text fallback — symbols appear literally)
+- `send_discord`: added 1990-char truncation guard (Discord 2000-char limit)
+- Failures now logged via `message()` (console only), not `stop()` — monitor won't flag them as errors
+
+---
 
 ## Previous State Note (2026-06-14)
 

@@ -49,12 +49,29 @@ market_features <- function(game_id, con) {
       names_from  = snapshot_type,
       values_from = c(line, pulled_at),
       names_glue  = "{snapshot_type}_{.value}"
-    ) |>
+    )
+
+  # pivot_wider only creates columns for snapshot_type values present in the
+  # query. Games captured after the opener window, or before closing, will be
+  # missing those columns entirely — causing mutate() to error.
+  snap_defaults <- list(
+    opener_line       = NA_real_,
+    midday_line       = NA_real_,
+    closing_line      = NA_real_,
+    opener_pulled_at  = NA_character_,
+    midday_pulled_at  = NA_character_,
+    closing_pulled_at = NA_character_
+  )
+  for (col in names(snap_defaults)) {
+    if (!col %in% names(wide)) wide[[col]] <- snap_defaults[[col]]
+  }
+
+  wide <- wide |>
     mutate(
-      # Movement deltas
-      delta_open_mid  = midday_line  - opener_line,
-      delta_mid_close = closing_line - midday_line,
-      delta_open_close= closing_line - opener_line,
+      # Movement deltas (NA when either endpoint not yet captured)
+      delta_open_mid   = midday_line  - opener_line,
+      delta_mid_close  = closing_line - midday_line,
+      delta_open_close = closing_line - opener_line,
 
       # Velocity: points moved per hour (opener → midday)
       hours_open_mid = as.numeric(difftime(
