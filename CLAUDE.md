@@ -29,14 +29,61 @@
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
-## Current State Note (2026-06-20)
+## Current State Note (2026-06-23)
 
 - **`bet_alerts.R` is live and wired** — `emit_wnba_bet_alert()` has full Kelly sizing (half-Kelly) + `emit_broadcast()` + BET_HISTORY CSV. Sourced in `run_pipeline.R` at startup; called from Step 4 after `run_prediction()` on every steam flag. The bet chain is complete and ready to fire.
-- **Steam not yet detected** — Root cause: WNBA books don't post same-day lines until ~2-3 PM ET. Old `OPEN_HOUR = 10L` captured 0 rows from the API; no opener baseline → no steam comparison. Fixed (Session 5): `OPEN_HOUR = 15L` (3 PM ET), `MIDDAY_HOUR = 17L` (5 PM ET), `SETTLE_HOUR = 10L` (morning settlement decoupled from odds collection). First real steam opportunity: Mon Jun 22 pipeline run.
-- **`send_telegram`/`send_discord` 400 fix** — Added `req_error(is_error = \(r) FALSE)` to both functions; Telegram now falls back to plain text on 400 instead of throwing. Root cause of Jun 16-17 monitor errors (22 ERR): markdown parse failure on specific game spread data. Monitor clean since Jun 18.
-- **`wnba_settle.R` added** — populates `game_outcomes` from Odds API scores; settlement decoupled to `SETTLE_HOUR = 10L` in `run_pipeline.R`. Table at 958 rows (950 training + 8 live); daily runs maintain it.
+- **Steam dedup deployed** — `steam_log` table gates all alerts; `is_new_steam()` + `resolve_steam()` prevent duplicate fire. Root-cause fix for 900+ duplicate alerts in first 48h. `resolve_steam()` called after Step 3b (continuous check), not before — was causing second wave of duplicates.
+- **Discord bot wired** — `send_discord()` in `injury_alert.R` prefers `discord_bot_token` over webhook; falls back on failure. All Discord output posts as WNBA bot to `#auto-bet-broadcast`. Bot token confirmed in `credentials.json`.
+- **OddsPortal backfill complete** — 662/978 historical games (76.5%) now have real closing totals in `lines` table (`snapshot_type='closing', bookmaker='oddsportal'`). `data/op_done.rds` tracks progress; safe to re-run (skips already-done games).
+- **Models retrained (2026-06-23)** — `closing_line` added as predictor. R² improved: totals 6.7%→8.0%, spreads 5.6%→13.3%. Top totals features: `home_on_off_delta` (0.25), `away_on_off_delta` (0.20), `home_pace` (0.15), `away_pace` (0.14), `closing_line` (0.14). Weekly retrain (Sun 6 AM) will continue to improve coverage as 2026 live lines accumulate.
+- **Steam timing corrected** — `OPEN_HOUR = 15L`, `MIDDAY_HOUR = 17L`, `SETTLE_HOUR = 10L`. WNBA books don't post until ~3 PM ET; old 10 AM window captured 0 rows.
 - **`game_outcomes` daysFrom limit = 3** — Odds API returns 422 for `daysFrom > 3`. Default `SCORES_DAYS_BACK = 3L` is correct.
 - **bet_router settler wired** — `settle_wnba_bets()` joins `open_bets → game_outcomes` on `game_id`. Will activate on first real WNBA alert.
+
+## Session Summary (2026-06-23, Session 6 — OddsPortal Backfill + Model Retraining)
+
+### `scripts/oddsportal_scraper.R` (new)
+
+Firecrawl-based scraper fetching historical WNBA closing totals from OddsPortal for 2023/2024/2025 seasons. Writes to `lines` table as `snapshot_type='closing', bookmaker='oddsportal'` — two rows per game (Over + Under).
+
+**Key functions:**
+- `.season_game_list(season)` — paginates OddsPortal results pages; **hash-based routing** (`results/#/page/N/`, NOT `?page=N` which cycles same content); `wait_ms = 15000L`; cycle detection: stops when >60% of a new page's game IDs were already seen
+- `.parse_closing_total(game_url)` — Firecrawl JS-click actions: click "Over/Under" tab after 7s wait → scrape displayed odds; returns point + odds
+- `.match_game_id(op_date, home_slug, away_slug)` — joins to `game_outcomes + game_log` via date + `agrepl(max.distance=0.3)` fuzzy team name match
+- `oddsportal_backfill_run()` — processes all three seasons; progress saved to `data/op_done.rds`; safe to interrupt/resume
+
+**Backfill result:** 662/978 games (67.7% 2023, 73.5% 2024, ~80% 2025); 76.5% overall. Remaining ~24% imputed to median in XGBoost via `step_impute_median()`.
+
+**Pagination note:** OddsPortal is a Next.js SPA — `?page=N` returns the same recent window regardless of N. Correct URL is `results/#/page/N/` with a 15s wait for JS hydration.
+
+### `scripts/shadow_model/train.R` — `closing_line` predictor added
+
+- `closing_line = NA_real_` added to hardcoded NA block in `build_historical_training_set()`
+- After features built, joins OddsPortal lines: `SELECT game_id, AVG(point) AS closing_line FROM lines WHERE snapshot_type='closing' AND bookmaker='oddsportal' AND market='totals' GROUP BY game_id`
+- `"closing_line"` added to `PREDICTORS` (between `midday_line` and `delta_open_mid`)
+
+### `scripts/shadow_model/features.R` — bookmaker filter updated
+
+`'oddsportal'` added to bookmaker `IN` clause for the live inference closing line query — ensures live games can pull OddsPortal-sourced closing lines alongside Pinnacle/other books.
+
+### Model retraining results
+
+Both XGBoost models retrained with `closing_line` populated for 748/978 games:
+
+| Model | Before R² | After R² |
+|---|---|---|
+| Totals | 6.7% | 8.0% |
+| Spreads | 5.6% | 13.3% |
+
+**Totals VIP (top 7):** `home_on_off_delta` (0.25), `away_on_off_delta` (0.20), `home_pace` (0.15), `away_pace` (0.14), `closing_line` (0.14), `home_rest_days` (0.10), `away_rest_days` (0.05). On/off delta dominates; closing_line is 5th but grows as 2026 live data accumulates with real lines for every game.
+
+**Spreads model improved more** (5.6→13.3%) — spread prediction benefits more from closing_line (market encodes talent gap directly). Totals is more structural.
+
+### `scripts/credentials.json` — Firecrawl key added
+
+`"firecrawl_api_key": "fc-2716ee57343245ab96f8f9862660f1a2"` — used by `oddsportal_scraper.R` for JS-rendered page scraping.
+
+---
 
 ## Session Summary (2026-06-20, Session 5 — Steam Timing + Alert Fixes)
 
@@ -52,6 +99,25 @@ WNBA books don't post same-day lines until ~2-3 PM ET. Previous `OPEN_HOUR = 10L
 - Step 1 simplified — only fetches opener odds (settlement removed)
 
 Steam detection windows now: opener (3 PM) → midday (5 PM) → closing (~6:20 PM for 7:30 PM tips).
+
+### `db_setup.R` + `run_pipeline.R` — Steam dedup (`steam_log` table)
+
+Root cause of 900+ duplicate alerts in first 48h: `alert_steam_flags()` fired on every 30-min run against the same snapshot pair with no dedup.
+
+**Changes:**
+- New table `steam_log` — unique index on `(game_id, market, outcome_name, direction)`; tracks which steam events have already been alerted
+- `is_new_steam(event, con)` — returns TRUE only if the event isn't already in `steam_log`
+- `resolve_steam(con)` — marks all open `steam_log` entries as resolved at end of game day
+- `resolve_steam()` moved to **after** Step 3b (continuous check) — was previously called before, causing Step 3b to re-insert the same events on a clean slate (second wave of duplicates)
+- `distinct(game_id, .keep_all = TRUE)` added on `steam_today` in Step 4 shadow model to prevent duplicate predictions per invocation
+
+### `run_pipeline.R` — Opposite steam conflict display
+
+When `steam_log` has both ↑ and ↓ for the same `game_id + market` in the same run, now displayed as `⚡ CONFLICT ↑Xpts / ↓Xpts | N books split` instead of duplicate rows. Conflicts sorted to top of steam summary with conflict count in header.
+
+### `scripts/injury_alert.R` — Discord bot token preference
+
+`send_discord()` now prefers `creds$discord_bot_token` over the webhook URL, falling back to webhook on failure. All Discord output (run summaries, steam alerts, injury alerts, bet alerts) posts as the WNBA bot (`#auto-bet-broadcast`). Bot token confirmed in `credentials.json`.
 
 ### `scripts/injury_alert.R` — `send_telegram` + `send_discord` 400 fix
 

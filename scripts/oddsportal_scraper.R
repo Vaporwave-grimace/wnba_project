@@ -137,6 +137,8 @@ DONE_FILE     <- here("data", "op_done.rds")
 }
 
 # Scrape all results pages for one season — handles pagination automatically.
+# OddsPortal uses Next.js hash-based routing: page 2 = results/#/page/2/
+# (not ?page=2, which returns the same first-page window every time).
 .season_game_list <- function(season, key) {
   year_str <- if (season == as.integer(format(Sys.Date(), "%Y"))) {
     "wnba"
@@ -146,23 +148,76 @@ DONE_FILE     <- here("data", "op_done.rds")
   base_url <- paste0(OP_BASE, "/", year_str, "/results/")
 
   all_rows <- list()
-  for (page in seq_len(20L)) {
-    url <- if (page == 1L) base_url else paste0(base_url, "?page=", page)
-    message(sprintf("  [results] %d page %d — %s", season, page, url))
+  seen_ids <- character()
 
-    md   <- .fc_scrape(url, key, wait_ms = 10000L)
+  for (page in seq_len(30L)) {
+    # Hash-based SPA routing — Next.js reads location.hash on mount and routes
+    url <- if (page == 1L) base_url else paste0(base_url, "#/page/", page, "/")
+    message(sprintf("  [results] %d page %d", season, page))
+
+    # 15s wait: Next.js hash navigation adds one render cycle on top of initial load
+    md   <- .fc_scrape(url, key, wait_ms = 15000L)
     rows <- .parse_results_page(md, season)
 
     if (nrow(rows) == 0L) {
-      message("  [results] Empty page — pagination done")
+      message("  [results] Empty — done")
       break
     }
-    message(sprintf("  [results]   %d games found", nrow(rows)))
-    all_rows[[page]] <- rows
+
+    # Detect cycling: stop when >60% of this page's IDs were seen before
+    if (length(seen_ids) > 0L) {
+      overlap <- mean(rows$op_game_id %in% seen_ids)
+      if (overlap > 0.6) {
+        message(sprintf("  [results] Cycling (%.0f%% overlap) — stopping", overlap * 100))
+        break
+      }
+    }
+
+    new_rows <- rows |> filter(!op_game_id %in% seen_ids)
+    message(sprintf("  [results]   %d new games", nrow(new_rows)))
+    seen_ids <- c(seen_ids, rows$op_game_id)
+    if (nrow(new_rows) > 0L) all_rows[[page]] <- new_rows
     Sys.sleep(PAGE_DELAY)
   }
 
   bind_rows(all_rows)
+}
+
+# ── Pagination test ────────────────────────────────────────────────────────────
+
+# Quick sanity check: scrapes page 1 and page 2 for one season and reports
+# whether the hash-based pagination returns different games.
+# Run this before launching a full backfill.
+#
+# Usage: test_pagination("2025")
+test_pagination <- function(season = 2025L) {
+  creds <- read_json(here("scripts", "credentials.json"))
+  key   <- creds$firecrawl_api_key
+  if (is.null(key) || !nzchar(key)) stop("firecrawl_api_key missing")
+
+  year_str <- paste0("wnba-", season)
+  base_url <- paste0(OP_BASE, "/", year_str, "/results/")
+
+  message("── Pagination test: season ", season, " ─────────────────")
+
+  p1_md   <- .fc_scrape(base_url,                              key, wait_ms = 15000L)
+  p1_rows <- .parse_results_page(p1_md, as.integer(season))
+  message("Page 1: ", nrow(p1_rows), " games  | dates: ",
+          paste(unique(p1_rows$game_date)[1:3], collapse = ", "))
+
+  Sys.sleep(2L)
+
+  p2_url  <- paste0(base_url, "#/page/2/")
+  p2_md   <- .fc_scrape(p2_url,                               key, wait_ms = 15000L)
+  p2_rows <- .parse_results_page(p2_md, as.integer(season))
+  message("Page 2: ", nrow(p2_rows), " games  | dates: ",
+          paste(unique(p2_rows$game_date)[1:3], collapse = ", "))
+
+  overlap <- mean(p2_rows$op_game_id %in% p1_rows$op_game_id)
+  message(sprintf("Overlap: %.0f%%  ← 0%% = hash pagination working; 100%% = still cycling",
+                  overlap * 100))
+
+  invisible(list(p1 = p1_rows, p2 = p2_rows, overlap = overlap))
 }
 
 # ── OU markdown parser ─────────────────────────────────────────────────────────
@@ -241,16 +296,17 @@ DONE_FILE     <- here("data", "op_done.rds")
   s1 <- tolower(gsub("-", " ", op_row$team1_slug))
   s2 <- tolower(gsub("-", " ", op_row$team2_slug))
 
+  # agrepl: fuzzy match slug (e.g. "las vegas aces") against display name
+  # max.distance=0.3 handles minor differences; ignore.case for slug lowercase
   scores <- day |>
     mutate(
-      h = tolower(home_name),
-      a = tolower(away_name),
-      # Score 2 = both teams matched; 1 = one team matched; 0 = no match
+      h  = tolower(home_name),
+      a  = tolower(away_name),
       sc = pmax(
-        as.integer(grepl(s1, a, fixed = TRUE) | grepl(a, s1, fixed = TRUE)) +
-        as.integer(grepl(s2, h, fixed = TRUE) | grepl(h, s2, fixed = TRUE)),
-        as.integer(grepl(s1, h, fixed = TRUE) | grepl(h, s1, fixed = TRUE)) +
-        as.integer(grepl(s2, a, fixed = TRUE) | grepl(a, s2, fixed = TRUE))
+        as.integer(agrepl(s1, a, ignore.case = TRUE, max.distance = 0.3)) +
+        as.integer(agrepl(s2, h, ignore.case = TRUE, max.distance = 0.3)),
+        as.integer(agrepl(s1, h, ignore.case = TRUE, max.distance = 0.3)) +
+        as.integer(agrepl(s2, a, ignore.case = TRUE, max.distance = 0.3))
       )
     ) |>
     arrange(desc(sc))

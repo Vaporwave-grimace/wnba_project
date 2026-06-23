@@ -9,6 +9,12 @@ scripts/credentials.json
 # Database (regeneratable)
 data/*.sqlite
 
+# Transient scraper state
+data/op_done.rds
+
+# R plot output
+Rplots.pdf
+
 # Logs (runtime output)
 logs/
 
