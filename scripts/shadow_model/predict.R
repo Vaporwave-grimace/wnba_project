@@ -116,9 +116,12 @@ run_prediction <- function(game_id, steam_row, con, team_box = NULL) {
   combined <- bind_rows(log_rows)
   dbAppendTable(con, "clv_log", combined)
 
+  tot_str <- if (!is.null(log_rows$totals))
+    round(log_rows$totals$model_line, 1) else "—"
+  spr_str <- if (!is.null(log_rows$spreads))
+    round(log_rows$spreads$model_line, 1) else "—"
   message("CLV log updated for game ", game_id,
-          " [totals pred: ", round(log_rows$totals$model_line, 1),
-          " | spreads pred: ", round(log_rows$spreads$model_line, 1), "]")
+          " [totals pred: ", tot_str, " | spreads pred: ", spr_str, "]")
 
   invisible(combined)
 }

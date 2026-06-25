@@ -200,19 +200,40 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     window     = window
   )
 
-  if (!is.null(creds$discord_bot_token)) {
-    tryCatch(
-      request(paste0("https://discord.com/api/v10/channels/",
-                     .BROADCAST_CHANNEL, "/messages")) |>
-        req_headers(Authorization  = paste("Bot", creds$discord_bot_token),
-                    `Content-Type` = "application/json") |>
-        req_body_json(list(content = msg)) |>
-        req_error(is_error = \(r) FALSE) |>
-        req_perform(),
-      error = function(e)
-        message("[bet_alerts/WNBA] Discord post failed: ", e$message)
+  send_telegram(msg, creds)
+  send_discord(msg, creds, channel_id = .BROADCAST_CHANNEL)
+
+  # Write directly to open_bets.db — no Discord round-trip needed
+  tryCatch({
+    router_db <- normalizePath(
+      file.path(here::here(), "..", "bet_router", "open_bets.db"),
+      mustWork = FALSE
     )
-  }
+    if (file.exists(router_db)) {
+      rcon <- DBI::dbConnect(RSQLite::SQLite(), router_db)
+      on.exit(DBI::dbDisconnect(rcon), add = TRUE)
+      DBI::dbExecute(rcon, "
+        INSERT OR IGNORE INTO open_bets
+          (sport, pipeline, game_date, away_team, home_team,
+           bet_side, odds, fair_odds, model_prob, ev_pct,
+           game_time, status, fired_at, window, confidence, line_status)
+        VALUES
+          ('WNBA','WNBA',?,?,?,?,?,?,?,?,?,'OPEN',datetime('now'),?,?,'CONFIRMED')
+      ", list(
+        game_date, away_team, home_team,
+        play,
+        if (!is.na(bo$odds))    as.integer(bo$odds)    else NA,
+        if (!is.na(fair_odds))  as.integer(fair_odds)  else NA,
+        if (!is.na(model_prob)) as.numeric(model_prob) else NA,
+        if (!is.na(ev_pct))     as.numeric(ev_pct)     else NA,
+        if (!is.na(game_time_et)) game_time_et          else NA,
+        window, confidence
+      ))
+      message(sprintf("[bet_alerts/WNBA] -> open_bets: %s  %s @ %s", play, away_team, home_team))
+    }
+  }, error = function(e) {
+    message("[bet_alerts/WNBA] open_bets direct write failed (non-fatal): ", e$message)
+  })
 
   message(sprintf("[bet_alerts/WNBA] Alert posted: %s | %s | EV=%+.1f%%",
                   game_id, play, ev_pct))

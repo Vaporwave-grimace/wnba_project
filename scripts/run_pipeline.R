@@ -412,17 +412,22 @@ if (!is.null(latest_snap_type) && length(latest_snap_type) > 0) {
 
 # ── 2. Steam details ──────────────────────────────────────────────────────────
 
+# Closing snapshot = full-day steam recap; all other runs = last 35 min only
+is_closing_run <- identical(latest_snap_type, "closing")
+steam_time_sql <- ifelse(is_closing_run, "", "AND s.first_detected >= datetime('now', '-35 minutes')")
+count_time_sql <- ifelse(is_closing_run, "", "AND first_detected >= datetime('now', '-35 minutes')")
+
 steam_count <- tryCatch(
-  dbGetQuery(con, "
+  dbGetQuery(con, paste0("
     SELECT COUNT(*) AS n FROM steam_log
-    WHERE DATE(first_detected) = ? AND alert_sent = 1
-  ", list(today_str))$n,
+    WHERE DATE(first_detected) = ? AND alert_sent = 1 ", count_time_sql),
+    list(today_str))$n,
   error = function(e) 0L
 )
 
 steam_msg <- if (steam_count > 0) {
   steam_rows <- tryCatch(
-    dbGetQuery(con, "
+    dbGetQuery(con, paste0("
       SELECT s.market, s.outcome_name, s.direction,
              ROUND(s.magnitude, 1) AS magnitude, s.books_moved,
              l.home_team, l.away_team
@@ -430,9 +435,9 @@ steam_msg <- if (steam_count > 0) {
       LEFT JOIN (SELECT DISTINCT game_id, home_team, away_team FROM lines) l
         ON l.game_id = s.game_id
       WHERE DATE(s.first_detected) = ?
-        AND s.alert_sent = 1
+        AND s.alert_sent = 1 ", steam_time_sql, "
       ORDER BY s.first_detected DESC
-    ", list(today_str)) |> as_tibble(),
+    "), list(today_str)) |> as_tibble(),
     error = function(e) tibble()
   )
   if (nrow(steam_rows) > 0) {
@@ -472,8 +477,8 @@ steam_msg <- if (steam_count > 0) {
       sprintf("Steam (%d)", nrow(lines_out))
 
     paste0("\U0001f525 *", header_tag, "*\n", paste(bullets, collapse = "\n"))
-  } else "\U0001f525 No steam today"
-} else "\U0001f525 No steam today"
+  } else "\U0001f525 No new steam"
+} else if (is_closing_run) "\U0001f525 No steam today" else "\U0001f525 No new steam"
 
 # ── 3. Injury details ─────────────────────────────────────────────────────────
 
