@@ -29,7 +29,7 @@
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
-## Current State Note (2026-06-23)
+## Current State Note (2026-06-26)
 
 - **`bet_alerts.R` is live and wired** — `emit_wnba_bet_alert()` has full Kelly sizing (half-Kelly) + `emit_broadcast()` + BET_HISTORY CSV. Sourced in `run_pipeline.R` at startup; called from Step 4 after `run_prediction()` on every steam flag. The bet chain is complete and ready to fire.
 - **Steam dedup deployed** — `steam_log` table gates all alerts; `is_new_steam()` + `resolve_steam()` prevent duplicate fire. Root-cause fix for 900+ duplicate alerts in first 48h. `resolve_steam()` called after Step 3b (continuous check), not before — was causing second wave of duplicates.
@@ -39,6 +39,7 @@
 - **Steam timing corrected** — `OPEN_HOUR = 15L`, `MIDDAY_HOUR = 17L`, `SETTLE_HOUR = 10L`. WNBA books don't post until ~3 PM ET; old 10 AM window captured 0 rows.
 - **`game_outcomes` daysFrom limit = 3** — Odds API returns 422 for `daysFrom > 3`. Default `SCORES_DAYS_BACK = 3L` is correct.
 - **bet_router settler wired** — `settle_wnba_bets()` joins `open_bets → game_outcomes` on `game_id`. Will activate on first real WNBA alert.
+- **UTC date shift fixed (2026-06-26)** — `games_near_tip()` in `run_pipeline.R` was filtering `WHERE DATE(commence_time) = today` using raw UTC, so any game tipping at/after 8 PM ET (midnight+ UTC) fell on the next UTC date and was silently excluded. Fixed: `DATE(commence_time, '-4 hours')` converts to EDT before the date comparison. Most WNBA primetime games were affected.
 
 ## Session Summary (2026-06-23, Session 6 — OddsPortal Backfill + Model Retraining)
 

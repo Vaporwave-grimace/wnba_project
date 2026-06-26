@@ -84,7 +84,7 @@ games_near_tip <- function() {
     dbGetQuery(con, "
       SELECT DISTINCT game_id, commence_time
       FROM lines
-      WHERE DATE(commence_time) = ?
+      WHERE DATE(commence_time, '-4 hours') = ?
     ", list(today_str)) |> as_tibble(),
     error = function(e) tibble()
   )
