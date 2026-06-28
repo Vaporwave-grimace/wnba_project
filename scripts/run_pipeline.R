@@ -79,13 +79,15 @@ near_hour <- function(target_hour, window_mins = 25L) {
 # Fetch games today and return those tipping within PRE_TIP_MINS minutes
 games_near_tip <- function() {
   today_str <- format(now_et(), "%Y-%m-%d")
+  utc_lo    <- paste0(today_str, "T04:00:00Z")
+  utc_hi    <- paste0(format(as.Date(today_str) + 1L, "%Y-%m-%d"), "T04:00:00Z")
 
   games <- tryCatch(
     dbGetQuery(con, "
       SELECT DISTINCT game_id, commence_time
       FROM lines
-      WHERE DATE(commence_time, '-4 hours') = ?
-    ", list(today_str)) |> as_tibble(),
+      WHERE commence_time >= ? AND commence_time < ?
+    ", list(utc_lo, utc_hi)) |> as_tibble(),
     error = function(e) tibble()
   )
 

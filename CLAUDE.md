@@ -39,7 +39,7 @@
 - **Steam timing corrected** — `OPEN_HOUR = 15L`, `MIDDAY_HOUR = 17L`, `SETTLE_HOUR = 10L`. WNBA books don't post until ~3 PM ET; old 10 AM window captured 0 rows.
 - **`game_outcomes` daysFrom limit = 3** — Odds API returns 422 for `daysFrom > 3`. Default `SCORES_DAYS_BACK = 3L` is correct.
 - **bet_router settler wired** — `settle_wnba_bets()` joins `open_bets → game_outcomes` on `game_id`. Will activate on first real WNBA alert.
-- **UTC date shift fixed (2026-06-26)** — `games_near_tip()` in `run_pipeline.R` was filtering `WHERE DATE(commence_time) = today` using raw UTC, so any game tipping at/after 8 PM ET (midnight+ UTC) fell on the next UTC date and was silently excluded. Fixed: `DATE(commence_time, '-4 hours')` converts to EDT before the date comparison. Most WNBA primetime games were affected.
+- **UTC date shift fixed (2026-06-28)** — `games_near_tip()` in `run_pipeline.R` now uses a UTC range query (`commence_time >= today 04:00Z AND < tomorrow 04:00Z`) instead of `DATE(commence_time, '-4 hours') = today`. The offset approach was EDT-correct but off by one hour in EST (Nov–Mar). The 04:00Z boundary equals midnight EDT and 11 PM EST — past any real WNBA tip time — so the range is timezone-safe year-round.
 
 ## Session Summary (2026-06-23, Session 6 — OddsPortal Backfill + Model Retraining)
 
