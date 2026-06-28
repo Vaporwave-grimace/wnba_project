@@ -108,7 +108,7 @@ alert_steam_flags <- function(steam_df, creds, con) {
   if (is.null(steam_df) || nrow(steam_df) == 0) return(invisible(NULL))
 
   game_meta <- tryCatch(
-    dbGetQuery(con, "SELECT DISTINCT game_id, home_team, away_team FROM lines") |>
+    dbGetQuery(con, "SELECT game_id, home_team, away_team FROM games") |>
       as_tibble(),
     error = function(e) tibble(game_id = character(), home_team = character(),
                                away_team = character())
@@ -448,8 +448,7 @@ steam_msg <- if (steam_count > 0) {
              ROUND(s.magnitude, 1) AS magnitude, s.books_moved,
              l.home_team, l.away_team
       FROM steam_log s
-      LEFT JOIN (SELECT DISTINCT game_id, home_team, away_team FROM lines) l
-        ON l.game_id = s.game_id
+      LEFT JOIN games l ON l.game_id = s.game_id
       WHERE DATE(s.first_detected) = ?
         AND s.alert_sent = 1 ", steam_time_sql, "
       ORDER BY s.first_detected DESC

@@ -21,6 +21,22 @@ init_db <- function(path = DB_PATH) {
 
   # ── Market tables ────────────────────────────────────────────────────────────
 
+  # Game registry — one row per game_id; lines FKs into this
+  dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS games (
+      game_id        TEXT PRIMARY KEY,
+      commence_time  TEXT,
+      home_team      TEXT,
+      away_team      TEXT
+    )
+  ")
+
+  # Backfill from existing lines data (idempotent — INSERT OR IGNORE)
+  dbExecute(con, "
+    INSERT OR IGNORE INTO games (game_id, commence_time, home_team, away_team)
+    SELECT DISTINCT game_id, commence_time, home_team, away_team FROM lines
+  ")
+
   # Snapshot of opening and closing lines per game
   dbExecute(con, "
     CREATE TABLE IF NOT EXISTS lines (
@@ -36,7 +52,8 @@ init_db <- function(path = DB_PATH) {
       price          REAL,
       point          REAL,
       pulled_at      TEXT,
-      PRIMARY KEY (game_id, snapshot_type, bookmaker, market, outcome_name)
+      PRIMARY KEY (game_id, snapshot_type, bookmaker, market, outcome_name),
+      FOREIGN KEY (game_id) REFERENCES games(game_id)
     )
   ")
 

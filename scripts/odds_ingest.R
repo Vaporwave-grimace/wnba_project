@@ -186,6 +186,17 @@ save_snapshot <- function(odds_df, con) {
     )
   ")
 
+  # Upsert game registry first (one row per game_id)
+  games_df <- odds_df |>
+    dplyr::distinct(game_id, commence_time, home_team, away_team)
+  for (i in seq_len(nrow(games_df))) {
+    g <- games_df[i, ]
+    dbExecute(con, "
+      INSERT OR IGNORE INTO games (game_id, commence_time, home_team, away_team)
+      VALUES (?,?,?,?)
+    ", list(g$game_id, g$commence_time, g$home_team, g$away_team))
+  }
+
   # Write row by row via INSERT OR REPLACE to respect the PK constraint
   for (i in seq_len(nrow(odds_df))) {
     row <- odds_df[i, ]
