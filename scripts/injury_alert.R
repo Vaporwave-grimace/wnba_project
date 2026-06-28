@@ -1,4 +1,4 @@
-# scripts/injury_alert.R
+﻿# scripts/injury_alert.R
 # Injury discrepancy alerter
 #
 # Handles:
@@ -16,7 +16,7 @@ library(DBI)
 library(RSQLite)
 library(lubridate)
 
-DB_PATH    <- here::here("data", "wnba_pipeline.sqlite")
+DB_PATH    <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 CREDS_PATH <- here::here("scripts", "credentials.json")
 
 ESPN_BASE  <- "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba"

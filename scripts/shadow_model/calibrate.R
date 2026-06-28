@@ -1,4 +1,4 @@
-# scripts/shadow_model/calibrate.R
+﻿# scripts/shadow_model/calibrate.R
 # Calibration curve and CLV summary
 #
 # Queries the clv_log for completed games and generates:
@@ -16,7 +16,7 @@ library(RSQLite)
 library(lubridate)
 library(here)
 
-DB_PATH     <- here("data", "wnba_pipeline.sqlite")
+DB_PATH     <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 REPORTS_DIR <- here("reports")
 dir.create(REPORTS_DIR, showWarnings = FALSE)
 

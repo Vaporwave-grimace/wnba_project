@@ -1,4 +1,4 @@
-# scripts/shadow_model/seed.R
+﻿# scripts/shadow_model/seed.R
 # Historical data bootstrapper
 #
 # Seeds the pipeline DB with 2023 and 2024 WNBA season data so the
@@ -22,7 +22,7 @@ library(purrr)
 source(here("scripts", "db_setup.R"))
 source(here("scripts", "wnba_stats_api.R"))
 
-DB_PATH <- here("data", "wnba_pipeline.sqlite")
+DB_PATH <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 SEASONS <- c(2023L, 2024L, 2025L, 2026L)
 
 `%!in%` <- Negate(`%in%`)

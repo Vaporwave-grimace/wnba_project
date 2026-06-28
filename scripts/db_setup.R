@@ -1,4 +1,4 @@
-# scripts/db_setup.R
+﻿# scripts/db_setup.R
 # Initializes the WNBA pipeline SQLite database.
 # Run this once before any ingestion scripts.
 # Safe to re-run — all tables use CREATE IF NOT EXISTS.
@@ -6,7 +6,7 @@
 library(DBI)
 library(RSQLite)
 
-DB_PATH <- here::here("data", "wnba_pipeline.sqlite")
+DB_PATH <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 
 open_wnba_db <- function(path = DB_PATH) {
   con <- dbConnect(RSQLite::SQLite(), path)

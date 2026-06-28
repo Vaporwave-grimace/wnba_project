@@ -1,4 +1,4 @@
-# scripts/wnba_stats_api.R
+﻿# scripts/wnba_stats_api.R
 # WNBA stats layer — powered by the wehoop package
 #
 # Uses ESPN-backed wehoop functions only (load_wnba_* / espn_wnba_*).
@@ -20,7 +20,7 @@ library(DBI)
 library(RSQLite)
 library(lubridate)
 
-DB_PATH <- here::here("data", "wnba_pipeline.sqlite")
+DB_PATH <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 SEASON  <- 2025L   # integer year for load_wnba_* functions
 
 # ── Game Log ──────────────────────────────────────────────────────────────────

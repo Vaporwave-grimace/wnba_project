@@ -1,4 +1,4 @@
-# scripts/shadow_model/predict.R
+﻿# scripts/shadow_model/predict.R
 # Steam-triggered inference layer
 #
 # Called by run_pipeline.R whenever steam is detected on a game.
@@ -16,7 +16,7 @@ library(here)
 
 source(here("scripts", "shadow_model", "features.R"))
 
-DB_PATH    <- here("data", "wnba_pipeline.sqlite")
+DB_PATH    <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 MODELS_DIR <- here("models")
 
 # ── Load models (cached in memory for the session) ────────────────────────────

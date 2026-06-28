@@ -1,4 +1,4 @@
-# scripts/shadow_model/train.R
+﻿# scripts/shadow_model/train.R
 # XGBoost model training for the WNBA shadow model
 #
 # Trains two separate tidymodels workflows:
@@ -19,7 +19,7 @@ library(here)
 library(DBI)
 library(RSQLite)
 
-DB_PATH    <- here("data", "wnba_pipeline.sqlite")
+DB_PATH    <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 MODELS_DIR <- here("models")
 dir.create(MODELS_DIR, showWarnings = FALSE)
 

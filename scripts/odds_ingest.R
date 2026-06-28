@@ -1,4 +1,4 @@
-# scripts/odds_ingest.R
+﻿# scripts/odds_ingest.R
 # The Odds API ingestion layer
 #
 # Handles:
@@ -15,7 +15,7 @@ library(DBI)
 library(RSQLite)
 library(lubridate)
 
-DB_PATH      <- here::here("data", "wnba_pipeline.sqlite")
+DB_PATH      <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 CREDS_PATH   <- here::here("scripts", "credentials.json")
 ODDS_BASE    <- "https://api.the-odds-api.com/v4"
 SPORT        <- "basketball_wnba"

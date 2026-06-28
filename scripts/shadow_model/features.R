@@ -1,4 +1,4 @@
-# scripts/shadow_model/features.R
+﻿# scripts/shadow_model/features.R
 # Feature engineering layer for the WNBA shadow model
 #
 # Two entry points:
@@ -18,7 +18,7 @@ library(wehoop)
 library(DBI)
 library(RSQLite)
 
-DB_PATH <- here::here("data", "wnba_pipeline.sqlite")
+DB_PATH <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 
 # ── Market features ───────────────────────────────────────────────────────────
 

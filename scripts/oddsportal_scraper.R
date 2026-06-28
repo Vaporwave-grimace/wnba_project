@@ -1,4 +1,4 @@
-# scripts/oddsportal_scraper.R
+﻿# scripts/oddsportal_scraper.R
 # Backfill historical WNBA closing totals from OddsPortal via Firecrawl.
 #
 # Workflow:
@@ -29,7 +29,7 @@ suppressPackageStartupMessages({
   library(here)
 })
 
-DB_PATH       <- here("data", "wnba_pipeline.sqlite")
+DB_PATH       <- "C:/Users/Mike/sports_data/wnba_pipeline.sqlite"
 OP_BASE       <- "https://www.oddsportal.com/basketball/usa"
 FC_URL        <- "https://api.firecrawl.dev/v1/scrape"
 FC_WAIT_INIT  <- 7000L   # ms before JS click (React hydration)
