@@ -40,6 +40,28 @@
 - **`game_outcomes` daysFrom limit = 3** — Odds API returns 422 for `daysFrom > 3`. Default `SCORES_DAYS_BACK = 3L` is correct.
 - **bet_router settler wired** — `settle_wnba_bets()` joins `open_bets → game_outcomes` on `game_id`. Will activate on first real WNBA alert.
 - **UTC date shift fixed (2026-06-28)** — `games_near_tip()` in `run_pipeline.R` now uses a UTC range query (`commence_time >= today 04:00Z AND < tomorrow 04:00Z`) instead of `DATE(commence_time, '-4 hours') = today`. The offset approach was EDT-correct but off by one hour in EST (Nov–Mar). The 04:00Z boundary equals midnight EDT and 11 PM EST — past any real WNBA tip time — so the range is timezone-safe year-round.
+- **State-driven scheduling (2026-06-28)** — `pipeline_runs` table added to `db_setup.R` with `has_run_today()` / `mark_run_today()` helpers. Step 0 (settlement) was previously guarded by `near_hour(10)` — silently skipped if machine slept through 10 AM. Now `hour_et() >= SETTLE_HOUR && !has_run_today("settle", con)` fires on the next invocation after 10 AM. Steps 1/2 (opener/midday): `near_hour()` replaced with `hour_et() >= N`; inner DB count check retained as dedup.
+- **Error containment (2026-06-28)** — bare `dbGetQuery` calls for `opener_count`, `midday_count`, `already_closed`, `steam_today` wrapped in `tryCatch` with safe sentinel defaults. A locked DB skips the step rather than crashing the run.
+- **DB moved to local path (2026-06-28)** — `wnba_pipeline.sqlite` moved from Google Drive to `C:/Users/Mike/sports_data/`. All 10 scripts that defined `DB_PATH` updated. `open_wnba_db()` helper added to `db_setup.R`; `run_pipeline.R` and `wnba_settle.R` use it.
+- **PRAGMA foreign_keys (2026-06-28)** — `open_wnba_db()` now sets `PRAGMA foreign_keys = ON` on every connection. Was not set anywhere before.
+
+## Session Summary (2026-06-28, Session 7 — Infrastructure Hardening)
+
+### `scripts/db_setup.R`
+
+- Added `pipeline_runs` table: `PRIMARY KEY (step, run_date)` — one row per completed step per day
+- Added `has_run_today(step, con)` — returns TRUE if step completed today (DB query, `tryCatch`-guarded)
+- Added `mark_run_today(step, con)` — inserts completion row; idempotent via `INSERT OR IGNORE`
+- `open_wnba_db()` helper now sets `PRAGMA foreign_keys = ON` immediately after `dbConnect`
+- `DB_PATH` updated to `C:/Users/Mike/sports_data/wnba_pipeline.sqlite` (all 10 scripts)
+
+### `scripts/run_pipeline.R`
+
+- **Step 0**: `near_hour(SETTLE_HOUR)` → `hour_et() >= SETTLE_HOUR && !has_run_today("settle", con)` + `mark_run_today` at end
+- **Steps 1/2**: `near_hour()` replaced with `hour_et() >= N`; inner `dbGetQuery` for count wrapped in `tryCatch(error = \(e) 1L)`
+- **Step 3**: `already_closed <- dbGetQuery(...)` wrapped in `tryCatch(error = \(e) character(0))`
+- **Step 4**: `steam_today <- dbGetQuery(...)` wrapped in `tryCatch(error = \(e) tibble())`
+- UTC range fix: `commence_time >= ? AND < ?` replacing `DATE(commence_time, '-4 hours') = ?`
 
 ## Session Summary (2026-06-23, Session 6 — OddsPortal Backfill + Model Retraining)
 
