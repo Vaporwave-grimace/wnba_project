@@ -214,8 +214,35 @@ init_db <- function(path = DB_PATH) {
     )
   ")
 
+  dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS pipeline_runs (
+      step      TEXT,
+      run_date  TEXT,
+      ran_at    TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (step, run_date)
+    )
+  ")
+
   message("Database initialized at: ", path)
   invisible(path)
+}
+
+# ── Pipeline state helpers ────────────────────────────────────────────────────
+
+has_run_today <- function(step, con, date = format(Sys.Date(), "%Y-%m-%d")) {
+  tryCatch(
+    dbGetQuery(con, "SELECT COUNT(*) AS n FROM pipeline_runs WHERE step = ? AND run_date = ?",
+               list(step, date))$n > 0,
+    error = \(e) FALSE
+  )
+}
+
+mark_run_today <- function(step, con, date = format(Sys.Date(), "%Y-%m-%d")) {
+  tryCatch(
+    dbExecute(con, "INSERT OR IGNORE INTO pipeline_runs (step, run_date) VALUES (?, ?)",
+              list(step, date)),
+    error = \(e) invisible(NULL)
+  )
 }
 
 # Run directly to initialize

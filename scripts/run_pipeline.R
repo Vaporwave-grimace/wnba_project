@@ -144,7 +144,7 @@ alert_steam_flags <- function(steam_df, creds, con) {
 # Decoupled from odds collection so settlement runs early regardless of when
 # WNBA books post lines (typically 2-3 PM ET, too late for a 10 AM opener).
 
-if (near_hour(SETTLE_HOUR)) {
+if (hour_et() >= SETTLE_HOUR && !has_run_today("settle", con)) {
   log_info("MORNING — settling yesterday's completed games")
   safe_run(wnba_settle_run(con), "WNBA score settlement")
 
@@ -163,6 +163,8 @@ if (near_hour(SETTLE_HOUR)) {
                                      paste("write on/off for team", tid))
     })
   }
+
+  mark_run_today("settle", con)
 }
 
 # ── Step 1: Opener odds snapshot (3 PM ET) ───────────────────────────────────
@@ -170,13 +172,16 @@ if (near_hour(SETTLE_HOUR)) {
 # WNBA books typically post same-day lines by 2-3 PM ET. Running at 3 PM
 # ensures a populated baseline for the 5 PM midday steam comparison.
 
-if (near_hour(OPEN_HOUR)) {
+if (hour_et() >= OPEN_HOUR) {
   today_str    <- format(now_et(), "%Y-%m-%d")
-  opener_count <- dbGetQuery(con, "
-    SELECT COUNT(*) AS n FROM lines
-    WHERE snapshot_type = 'opener'
-      AND DATE(pulled_at) = ?
-  ", list(today_str))$n
+  opener_count <- tryCatch(
+    dbGetQuery(con, "
+      SELECT COUNT(*) AS n FROM lines
+      WHERE snapshot_type = 'opener'
+        AND DATE(pulled_at) = ?
+    ", list(today_str))$n,
+    error = \(e) 1L
+  )
 
   if (opener_count == 0) {
     log_info("OPEN window — fetching opener snapshot")
@@ -188,13 +193,16 @@ if (near_hour(OPEN_HOUR)) {
 
 # ── Step 2: Midday odds snapshot (5 PM ET) ───────────────────────────────────
 
-if (near_hour(MIDDAY_HOUR)) {
+if (hour_et() >= MIDDAY_HOUR) {
   today_str     <- format(now_et(), "%Y-%m-%d")
-  midday_count  <- dbGetQuery(con, "
-    SELECT COUNT(*) AS n FROM lines
-    WHERE snapshot_type = 'midday'
-      AND DATE(pulled_at) = ?
-  ", list(today_str))$n
+  midday_count  <- tryCatch(
+    dbGetQuery(con, "
+      SELECT COUNT(*) AS n FROM lines
+      WHERE snapshot_type = 'midday'
+        AND DATE(pulled_at) = ?
+    ", list(today_str))$n,
+    error = \(e) 1L
+  )
 
   if (midday_count == 0) {
     log_info("MIDDAY window — fetching midday snapshot")
@@ -213,9 +221,12 @@ if (length(near_tip_games) > 0) {
   log_info("PRE-TIP window — ", length(near_tip_games), " game(s) approaching tip-off")
 
   # Only capture closing if not already done for these games
-  already_closed <- dbGetQuery(con, "
-    SELECT DISTINCT game_id FROM lines WHERE snapshot_type = 'closing'
-  ")$game_id
+  already_closed <- tryCatch(
+    dbGetQuery(con, "
+      SELECT DISTINCT game_id FROM lines WHERE snapshot_type = 'closing'
+    ")$game_id,
+    error = \(e) character(0)
+  )
 
   pending <- setdiff(near_tip_games, already_closed)
 
@@ -283,14 +294,17 @@ if (length(near_tip_games) > 0) {
 # If steam was detected this run, fire predictions for each flagged game.
 # Models must exist (run seed.R then train.R first).
 if (file.exists(here("models", "totals_xgb.rds"))) {
-  steam_today <- dbGetQuery(con, "
-    SELECT DISTINCT game_id, direction, magnitude, books_moved, detected_at
-    FROM steam_movements
-    WHERE DATE(detected_at) = ?
-    ORDER BY detected_at DESC
-  ", list(format(now_et(), "%Y-%m-%d"))) |>
-    as_tibble() |>
-    distinct(game_id, .keep_all = TRUE)
+  steam_today <- tryCatch(
+    dbGetQuery(con, "
+      SELECT DISTINCT game_id, direction, magnitude, books_moved, detected_at
+      FROM steam_movements
+      WHERE DATE(detected_at) = ?
+      ORDER BY detected_at DESC
+    ", list(format(now_et(), "%Y-%m-%d"))) |>
+      as_tibble() |>
+      distinct(game_id, .keep_all = TRUE),
+    error = \(e) tibble()
+  )
 
   if (nrow(steam_today) > 0) {
     team_box_cache <- safe_run(
