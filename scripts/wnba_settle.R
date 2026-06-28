@@ -19,7 +19,7 @@ SCORES_DAYS_BACK <- 3L   # fetch up to 3 days of completed results per run
 wnba_settle_run <- function(con = NULL, days_from = SCORES_DAYS_BACK) {
   close_on_exit <- is.null(con)
   if (is.null(con)) {
-    con <- dbConnect(RSQLite::SQLite(), DB_PATH)
+    con <- open_wnba_db()
     if (close_on_exit) on.exit(dbDisconnect(con), add = TRUE)
   }
 

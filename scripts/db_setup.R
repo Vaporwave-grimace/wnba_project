@@ -8,9 +8,15 @@ library(RSQLite)
 
 DB_PATH <- here::here("data", "wnba_pipeline.sqlite")
 
+open_wnba_db <- function(path = DB_PATH) {
+  con <- dbConnect(RSQLite::SQLite(), path)
+  dbExecute(con, "PRAGMA foreign_keys = ON")
+  con
+}
+
 init_db <- function(path = DB_PATH) {
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
-  con <- dbConnect(RSQLite::SQLite(), path)
+  con <- open_wnba_db(path)
   on.exit(dbDisconnect(con))
 
   # ── Market tables ────────────────────────────────────────────────────────────

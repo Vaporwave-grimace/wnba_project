@@ -58,7 +58,7 @@ key_state$init(creds)
 safe_run(init_db(), "db init")
 
 # Open DB connection — shared across all steps this invocation
-con <- dbConnect(RSQLite::SQLite(), DB_PATH)
+con <- open_wnba_db()
 on.exit(dbDisconnect(con), add = TRUE)
 
 # ── Time Helpers ──────────────────────────────────────────────────────────────
