@@ -104,6 +104,8 @@ games_near_tip <- function() {
 
 # ── Alert Helper ─────────────────────────────────────────────────────────────
 
+STEAM_CHANNEL_ID <- "1521690907760525342"  # #steam-alerts
+
 alert_steam_flags <- function(steam_df, creds, con) {
   if (is.null(steam_df) || nrow(steam_df) == 0) return(invisible(NULL))
 
@@ -132,7 +134,7 @@ alert_steam_flags <- function(steam_df, creds, con) {
       away_team = if (nrow(meta) > 0) meta$away_team[1] else NULL
     )
     safe_run(send_telegram(msg, creds), paste("steam telegram alert", i))
-    safe_run(send_discord(msg,  creds), paste("steam discord alert",  i))
+    safe_run(send_discord(msg, creds, channel_id = STEAM_CHANNEL_ID), paste("steam discord alert", i))
     Sys.sleep(1)
   }
 
@@ -532,7 +534,7 @@ summary_msg <- paste(
 )
 
 safe_run(send_telegram(summary_msg, creds), "telegram run summary")
-safe_run(send_discord(summary_msg,  creds), "discord run summary")
+safe_run(send_discord(summary_msg, creds, channel_id = STEAM_CHANNEL_ID), "discord run summary")
 
 log_info("Pipeline run complete")
 log_info("──────────────────────────────────────────")
