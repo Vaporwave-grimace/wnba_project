@@ -29,11 +29,12 @@
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
-## Current State Note (2026-06-26)
+## Current State Note (2026-07-03)
 
 - **`bet_alerts.R` is live and wired** — `emit_wnba_bet_alert()` has full Kelly sizing (half-Kelly) + `emit_broadcast()` + BET_HISTORY CSV. Sourced in `run_pipeline.R` at startup; called from Step 4 after `run_prediction()` on every steam flag. The bet chain is complete and ready to fire.
 - **Steam dedup deployed** — `steam_log` table gates all alerts; `is_new_steam()` + `resolve_steam()` prevent duplicate fire. Root-cause fix for 900+ duplicate alerts in first 48h. `resolve_steam()` called after Step 3b (continuous check), not before — was causing second wave of duplicates.
-- **Discord bot wired** — `send_discord()` in `injury_alert.R` prefers `discord_bot_token` over webhook; falls back on failure. All Discord output posts as WNBA bot to `#auto-bet-broadcast`. Bot token confirmed in `credentials.json`.
+- **Discord bot wired** — `send_discord()` in `injury_alert.R` prefers `discord_bot_token` over webhook; falls back on failure. Bot token confirmed in `credentials.json`.
+- **Steam alerts → #steam-alerts (2026-07-03)** — individual steam flag alerts and run summary Discord posts now route to `#steam-alerts` (channel ID `1521690907760525342`) instead of `#auto-bet-broadcast`. Constant `STEAM_CHANNEL_ID` defined in `run_pipeline.R`; both `alert_steam_flags()` individual sends and the end-of-run summary pass `channel_id = STEAM_CHANNEL_ID`.
 - **OddsPortal backfill complete** — 662/978 historical games (76.5%) now have real closing totals in `lines` table (`snapshot_type='closing', bookmaker='oddsportal'`). `data/op_done.rds` tracks progress; safe to re-run (skips already-done games).
 - **Models retrained (2026-06-23)** — `closing_line` added as predictor. R² improved: totals 6.7%→8.0%, spreads 5.6%→13.3%. Top totals features: `home_on_off_delta` (0.25), `away_on_off_delta` (0.20), `home_pace` (0.15), `away_pace` (0.14), `closing_line` (0.14). Weekly retrain (Sun 6 AM) will continue to improve coverage as 2026 live lines accumulate.
 - **Steam timing corrected** — `OPEN_HOUR = 15L`, `MIDDAY_HOUR = 17L`, `SETTLE_HOUR = 10L`. WNBA books don't post until ~3 PM ET; old 10 AM window captured 0 rows.
@@ -44,6 +45,20 @@
 - **Error containment (2026-06-28)** — bare `dbGetQuery` calls for `opener_count`, `midday_count`, `already_closed`, `steam_today` wrapped in `tryCatch` with safe sentinel defaults. A locked DB skips the step rather than crashing the run.
 - **DB moved to local path (2026-06-28)** — `wnba_pipeline.sqlite` moved from Google Drive to `C:/Users/Mike/sports_data/`. All 10 scripts that defined `DB_PATH` updated. `open_wnba_db()` helper added to `db_setup.R`; `run_pipeline.R` and `wnba_settle.R` use it.
 - **PRAGMA foreign_keys (2026-06-28)** — `open_wnba_db()` now sets `PRAGMA foreign_keys = ON` on every connection. Was not set anywhere before.
+
+## Session Summary (2026-07-03, Session 8 — Steam Channel Routing)
+
+### `scripts/run_pipeline.R` — Steam alerts routed to #steam-alerts
+
+Steam Discord alerts were posting to `#auto-bet-broadcast` (the bet ingestion channel), cluttering it with non-actionable noise. Fixed by adding a `STEAM_CHANNEL_ID` constant and passing it to both `send_discord()` calls.
+
+**Changes:**
+- Added `STEAM_CHANNEL_ID <- "1521690907760525342"` constant (`#steam-alerts`)
+- `alert_steam_flags()` individual alert loop: `send_discord(msg, creds, channel_id = STEAM_CHANNEL_ID)`
+- End-of-run summary: `send_discord(summary_msg, creds, channel_id = STEAM_CHANNEL_ID)`
+- `#auto-bet-broadcast` now receives only structured bet alerts (`emit_broadcast()` blocks)
+
+---
 
 ## Session Summary (2026-06-28, Session 7 — Infrastructure Hardening)
 
