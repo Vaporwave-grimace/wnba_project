@@ -205,10 +205,7 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
 
   # Write directly to open_bets.db — no Discord round-trip needed
   tryCatch({
-    router_db <- normalizePath(
-      file.path(here::here(), "..", "bet_router", "open_bets.db"),
-      mustWork = FALSE
-    )
+    router_db <- "C:/Users/Mike/sports_data/open_bets.db"
     if (file.exists(router_db)) {
       rcon <- DBI::dbConnect(RSQLite::SQLite(), router_db)
       on.exit(DBI::dbDisconnect(rcon), add = TRUE)
