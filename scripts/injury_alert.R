@@ -1,4 +1,4 @@
-﻿# scripts/injury_alert.R
+# scripts/injury_alert.R
 # Injury discrepancy alerter
 #
 # Handles:
@@ -289,6 +289,8 @@ send_telegram <- function(message_text, creds) {
 
 send_discord <- function(message_text, creds,
                          channel_id = "1499488823598387412") {
+  DEFAULT_CHANNEL <- "1499488823598387412"  # #auto-bet-broadcast
+
   if (!nzchar(message_text %||% "")) {
     message("[send_discord] Skipping empty message.")
     return(invisible(FALSE))
@@ -298,7 +300,9 @@ send_discord <- function(message_text, creds,
     message_text <- paste0(substr(message_text, 1L, 1987L), "...")
   }
 
-  # Prefer bot token (shows as WNBA bot); fall back to webhook
+  # Prefer bot token (shows as WNBA bot); fall back to webhook only for default channel.
+  # The webhook is channel-specific and ignores `channel_id` — don't use it for
+  # non-default channels or the message silently lands in the wrong channel.
   if (!is.null(creds$discord_bot_token)) {
     resp <- request(paste0("https://discord.com/api/v10/channels/",
                            channel_id, "/messages")) |>
@@ -309,11 +313,17 @@ send_discord <- function(message_text, creds,
       req_perform()
 
     if (resp_status(resp) %in% c(200L, 204L)) {
-      message("[send_discord] Alert sent (bot).")
+      message("[send_discord] Alert sent (bot) to channel ", channel_id)
       return(invisible(TRUE))
     }
-    message("[send_discord] Bot post failed (HTTP ", resp_status(resp),
-            ") — falling back to webhook")
+    message("[send_discord] Bot post failed (HTTP ", resp_status(resp), ")")
+
+    if (channel_id != DEFAULT_CHANNEL) {
+      message("[send_discord] Non-default channel — skipping webhook fallback (webhook routes to #auto-bet-broadcast regardless)")
+      message("[send_discord] ACTION NEEDED: ensure WNBA_Shadow bot has Send Messages in channel ", channel_id)
+      return(invisible(FALSE))
+    }
+    message("[send_discord] Falling back to webhook")
   }
 
   resp <- request(creds$discord_webhook_url) |>

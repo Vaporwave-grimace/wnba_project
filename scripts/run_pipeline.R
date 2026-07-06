@@ -533,8 +533,22 @@ summary_msg <- paste(
   collapse = "\n\n"
 )
 
-safe_run(send_telegram(summary_msg, creds), "telegram run summary")
-safe_run(send_discord(summary_msg, creds, channel_id = STEAM_CHANNEL_ID), "discord run summary")
+# Send summary only:
+#   (a) within game hours  — 3 PM ET through 2 AM ET (hour >= OPEN_HOUR OR hour < 2)
+#   (b) not a repeated closing recap — closing state fires every 30 min for hours;
+#       only send the full-day recap once and mark it done
+within_game_hours    <- hour_et() >= OPEN_HOUR || hour_et() < 2L
+closing_already_sent <- is_closing_run && has_run_today("closing_summary", con)
+
+if (!within_game_hours) {
+  log_info("Summary suppressed — outside game hours (before 3 PM or after 2 AM ET)")
+} else if (closing_already_sent) {
+  log_info("Summary suppressed — closing recap already sent today")
+} else {
+  safe_run(send_telegram(summary_msg, creds), "telegram run summary")
+  safe_run(send_discord(summary_msg, creds, channel_id = STEAM_CHANNEL_ID), "discord run summary")
+  if (is_closing_run) mark_run_today("closing_summary", con)
+}
 
 log_info("Pipeline run complete")
 log_info("──────────────────────────────────────────")
