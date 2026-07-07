@@ -1,4 +1,4 @@
-﻿# scripts/db_setup.R
+# scripts/db_setup.R
 # Initializes the WNBA pipeline SQLite database.
 # Run this once before any ingestion scripts.
 # Safe to re-run — all tables use CREATE IF NOT EXISTS.
@@ -101,11 +101,19 @@ init_db <- function(path = DB_PATH) {
     WHERE resolved = 0
   ")
 
-  # Idempotent migration: add steam_direction to clv_log for directional CLV computation
+  # Idempotent migrations for clv_log
   clv_cols <- dbListFields(con, "clv_log")
   if (!"steam_direction" %in% clv_cols) {
     dbExecute(con, "ALTER TABLE clv_log ADD COLUMN steam_direction TEXT")
     message("[db_setup] Migrated clv_log: added steam_direction column")
+  }
+  if (!"market_line_at_bet" %in% clv_cols) {
+    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN market_line_at_bet REAL")
+    message("[db_setup] Migrated clv_log: added market_line_at_bet column")
+  }
+  if (!"trigger" %in% clv_cols) {
+    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN trigger TEXT DEFAULT 'steam'")
+    message("[db_setup] Migrated clv_log: added trigger column")
   }
 
   # ── Roster / stats tables ─────────────────────────────────────────────────────

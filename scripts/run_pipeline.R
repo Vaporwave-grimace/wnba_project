@@ -343,6 +343,75 @@ if (file.exists(here("models", "totals_xgb.rds"))) {
   log_info("Shadow model not trained yet — skipping prediction step")
 }
 
+# ── Step 4b: Pregame model — schedule-triggered (5 PM ET, once per day) ──────
+#
+# Runs both XGBoost models on every game today regardless of steam.
+# Steam is used only as a confidence label — it does not gate the run.
+# Deduped via pipeline_runs so only one pass fires per calendar day.
+
+if (hour_et() >= MIDDAY_HOUR && !has_run_today("pregame_model", con)) {
+  if (file.exists(here("models", "totals_xgb.rds"))) {
+    log_info("Step 4b: pregame model — running on all today's games")
+
+    today_games <- tryCatch(
+      dbGetQuery(con, "
+        SELECT DISTINCT game_id FROM lines
+        WHERE DATE(commence_time, '-4 hours') = ?
+      ", list(format(now_et(), "%Y-%m-%d"))) |> as_tibble(),
+      error = \(e) tibble(game_id = character(0))
+    )
+
+    # Which games have any steam today (used only to set steam_confirmed label)
+    steamed_games <- tryCatch(
+      dbGetQuery(con, "
+        SELECT DISTINCT game_id FROM steam_movements
+        WHERE DATE(detected_at) = ?
+      ", list(format(now_et(), "%Y-%m-%d")))$game_id,
+      error = \(e) character(0)
+    )
+
+    if (nrow(today_games) == 0) {
+      log_info("Step 4b: no games found for today, skipping")
+    } else {
+      team_box_pg <- safe_run(
+        wehoop::load_wnba_team_box(seasons = SEASON),
+        "load team box for pregame model"
+      )
+
+      walk(today_games$game_id, function(gid) {
+        pred <- safe_run(
+          run_prediction_pregame(gid, con, team_box = team_box_pg),
+          paste("pregame model prediction for", gid)
+        )
+
+        if (!is.null(pred) && nrow(pred) > 0) {
+          sc <- gid %in% steamed_games
+          for (j in seq_len(nrow(pred))) {
+            safe_run(
+              emit_wnba_bet_alert(
+                game_id        = pred$game_id[j],
+                market         = pred$market[j],
+                side           = pred$side[j],
+                model_line     = pred$model_line[j],
+                mkt_line       = pred$market_line_at_bet[j],
+                con            = con,
+                creds          = creds,
+                steam_confirmed = sc
+              ),
+              paste("pregame bet alert for", pred$game_id[j], pred$market[j])
+            )
+          }
+        }
+      })
+
+      mark_run_today("pregame_model", con)
+      log_info("Step 4b: pregame model complete —", nrow(today_games), "game(s) evaluated")
+    }
+  } else {
+    log_info("Step 4b: shadow model not trained yet — skipping pregame prediction")
+  }
+}
+
 # ── Step 5: Injury poll (every invocation during game day) ───────────────────
 
 h <- hour_et()

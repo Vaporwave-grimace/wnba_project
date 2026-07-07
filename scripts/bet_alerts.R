@@ -96,7 +96,7 @@ MIN_EV_PCT <- 3.0
 # Returns the emitted message string, or NULL if below threshold / no odds.
 
 emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
-                                con, creds) {
+                                con, creds, steam_confirmed = FALSE) {
   meta <- .game_meta(game_id, con)
   if (nrow(meta) == 0) {
     message("[bet_alerts/WNBA] No game meta for ", game_id)
@@ -175,7 +175,7 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     "Live"
   )
 
-  confidence <- if (ev_pct >= 6) "HIGH" else "MEDIUM"
+  confidence <- if (steam_confirmed || ev_pct >= 6) "HIGH" else "MEDIUM"
   edge_str   <- sprintf("%+.1f%%", ev_pct)
   game_date  <- tryCatch(
     as.character(as.Date(meta$commence_time[1])),
