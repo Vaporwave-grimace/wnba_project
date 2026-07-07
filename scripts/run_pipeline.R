@@ -31,6 +31,7 @@ source(here("scripts", "wnba_stats_api.R"))
 source(here("scripts", "injury_alert.R"))
 source(here("scripts", "shadow_model", "features.R"))
 source(here("scripts", "shadow_model", "predict.R"))
+source(here("scripts", "shadow_model", "mispricing.R"))
 source(here("scripts", "bet_alerts.R"))
 source(here("scripts", "wnba_settle.R"))
 
@@ -291,10 +292,12 @@ if (length(near_tip_games) > 0) {
   walk(near_tip_games, function(gid) resolve_steam(con, gid))
 }
 
-# ── Step 4: Shadow model — predict on steam flags ─────────────────────────────
+# ── Step 4: XGBoost CLV logging (steam-triggered, no alerts) ─────────────────
+#
+# When steam is detected, log XGBoost predictions to clv_log for calibration.
+# Alerts are NOT fired here — they come from Step 4b (mispricing + steam gate).
+# This keeps the two approaches independently trackable in clv_log via trigger col.
 
-# If steam was detected this run, fire predictions for each flagged game.
-# Models must exist (run seed.R then train.R first).
 if (file.exists(here("models", "totals_xgb.rds"))) {
   steam_today <- tryCatch(
     dbGetQuery(con, "
@@ -310,105 +313,105 @@ if (file.exists(here("models", "totals_xgb.rds"))) {
 
   if (nrow(steam_today) > 0) {
     team_box_cache <- safe_run(
-      wehoop::load_wnba_team_box(seasons = as.integer(format(now_et(), "%Y"))),
-      "load team box for shadow model"
+      wehoop::load_wnba_team_box(seasons = SEASON),
+      "load team box for XGBoost CLV log"
     )
-
     walk(seq_len(nrow(steam_today)), function(i) {
-      pred <- safe_run(
+      safe_run(
         run_prediction(steam_today$game_id[i], steam_today[i, ], con,
                        team_box = team_box_cache),
-        paste("shadow model prediction for", steam_today$game_id[i])
+        paste("XGBoost CLV log for", steam_today$game_id[i])
       )
-
-      if (!is.null(pred) && nrow(pred) > 0) {
-        for (j in seq_len(nrow(pred))) {
-          safe_run(
-            emit_wnba_bet_alert(
-              game_id    = pred$game_id[j],
-              market     = pred$market[j],
-              side       = pred$side[j],
-              model_line = pred$model_line[j],
-              mkt_line   = pred$market_line_at_bet[j],
-              con        = con,
-              creds      = creds
-            ),
-            paste("bet alert for", pred$game_id[j], pred$market[j])
-          )
-        }
-      }
     })
+    log_info("XGBoost CLV log complete —", nrow(steam_today), "steam game(s)")
   }
 } else {
-  log_info("Shadow model not trained yet — skipping prediction step")
+  log_info("XGBoost models not trained yet — skipping CLV log step")
 }
 
-# ── Step 4b: Pregame model — schedule-triggered (5 PM ET, once per day) ──────
+# ── Step 4b: Mispricing model — Pinnacle deviation + steam gate ───────────────
 #
-# Runs both XGBoost models on every game today regardless of steam.
-# Steam is used only as a confidence label — it does not gate the run.
-# Deduped via pipeline_runs so only one pass fires per calendar day.
+# Fires once per day at MIDDAY_HOUR (5 PM ET). Alert fires only when BOTH:
+#   1. Soft book total deviates from injury-adjusted Pinnacle by >= DEV_THRESHOLD
+#   2. Steam today confirms the model's direction (down for UNDER, up for OVER)
+#
+# XGBoost (Step 4) only logs to clv_log for calibration — it does not alert.
 
-if (hour_et() >= MIDDAY_HOUR && !has_run_today("pregame_model", con)) {
-  if (file.exists(here("models", "totals_xgb.rds"))) {
-    log_info("Step 4b: pregame model — running on all today's games")
+if (hour_et() >= MIDDAY_HOUR && !has_run_today("mispricing_model", con)) {
+  log_info("Step 4b: mispricing model — Pinnacle deviation + steam gate")
 
-    today_games <- tryCatch(
-      dbGetQuery(con, "
-        SELECT DISTINCT game_id FROM lines
-        WHERE DATE(commence_time, '-4 hours') = ?
-      ", list(format(now_et(), "%Y-%m-%d"))) |> as_tibble(),
-      error = \(e) tibble(game_id = character(0))
-    )
+  today_games <- tryCatch(
+    dbGetQuery(con, "
+      SELECT DISTINCT game_id FROM lines
+      WHERE DATE(commence_time, '-4 hours') = ?
+    ", list(format(now_et(), "%Y-%m-%d"))) |> as_tibble(),
+    error = \(e) tibble(game_id = character(0))
+  )
 
-    # Which games have any steam today (used only to set steam_confirmed label)
-    steamed_games <- tryCatch(
-      dbGetQuery(con, "
-        SELECT DISTINCT game_id FROM steam_movements
-        WHERE DATE(detected_at) = ?
-      ", list(format(now_et(), "%Y-%m-%d")))$game_id,
-      error = \(e) character(0)
-    )
+  # Fresh injury snapshot with team names for injury-adjusted Pinnacle line
+  injuries_raw <- safe_run(fetch_all_injuries(), "fetch injuries for mispricing model")
+  injuries_with_names <- if (!is.null(injuries_raw) && nrow(injuries_raw) > 0) {
+    teams_map <- safe_run(fetch_espn_teams(), "fetch ESPN team names")
+    if (!is.null(teams_map) && "team_id" %in% names(injuries_raw))
+      left_join(injuries_raw, teams_map, by = "team_id")
+    else
+      injuries_raw
+  } else NULL
 
-    if (nrow(today_games) == 0) {
-      log_info("Step 4b: no games found for today, skipping")
-    } else {
-      team_box_pg <- safe_run(
-        wehoop::load_wnba_team_box(seasons = SEASON),
-        "load team box for pregame model"
+  # Steam today for direction gate (totals only)
+  steam_totals <- tryCatch(
+    dbGetQuery(con, "
+      SELECT game_id, direction FROM steam_movements
+      WHERE DATE(detected_at) = ?
+        AND market = 'totals'
+    ", list(format(now_et(), "%Y-%m-%d"))) |> as_tibble(),
+    error = \(e) tibble()
+  )
+
+  if (nrow(today_games) > 0) {
+    walk(today_games$game_id, function(gid) {
+      misprice <- safe_run(
+        compute_mispricing(gid, con, injuries_with_names),
+        paste("mispricing for", gid)
+      )
+      if (is.null(misprice)) return(invisible(NULL))
+
+      # Steam gate: steam direction must agree with model side.
+      # direction='down' → books lowering total = sharp UNDER money → confirms UNDER
+      # direction='up'   → books raising total  = sharp OVER money  → confirms OVER
+      game_steam   <- filter(steam_totals, game_id == gid)
+      model_side   <- misprice$side[1]
+      steam_agrees <- nrow(game_steam) > 0 && any(
+        (model_side == "under" & game_steam$direction == "down") |
+        (model_side == "over"  & game_steam$direction == "up")
       )
 
-      walk(today_games$game_id, function(gid) {
-        pred <- safe_run(
-          run_prediction_pregame(gid, con, team_box = team_box_pg),
-          paste("pregame model prediction for", gid)
+      if (!steam_agrees) {
+        log_info("Mispricing found for", gid, "— no confirming steam, skipping alert")
+        return(invisible(NULL))
+      }
+
+      for (j in seq_len(nrow(misprice))) {
+        safe_run(
+          emit_wnba_bet_alert(
+            game_id         = misprice$game_id[j],
+            market          = misprice$market[j],
+            side            = misprice$side[j],
+            model_line      = misprice$adj_pinnacle[j],
+            mkt_line        = misprice$soft_line[j],
+            con             = con,
+            creds           = creds,
+            steam_confirmed = TRUE
+          ),
+          paste("mispricing alert for", misprice$game_id[j], misprice$market[j])
         )
+      }
+    })
 
-        if (!is.null(pred) && nrow(pred) > 0) {
-          sc <- gid %in% steamed_games
-          for (j in seq_len(nrow(pred))) {
-            safe_run(
-              emit_wnba_bet_alert(
-                game_id        = pred$game_id[j],
-                market         = pred$market[j],
-                side           = pred$side[j],
-                model_line     = pred$model_line[j],
-                mkt_line       = pred$market_line_at_bet[j],
-                con            = con,
-                creds          = creds,
-                steam_confirmed = sc
-              ),
-              paste("pregame bet alert for", pred$game_id[j], pred$market[j])
-            )
-          }
-        }
-      })
-
-      mark_run_today("pregame_model", con)
-      log_info("Step 4b: pregame model complete —", nrow(today_games), "game(s) evaluated")
-    }
+    mark_run_today("mispricing_model", con)
+    log_info("Step 4b: mispricing model complete —", nrow(today_games), "game(s) evaluated")
   } else {
-    log_info("Step 4b: shadow model not trained yet — skipping pregame prediction")
+    log_info("Step 4b: no games found for today")
   }
 }
 
