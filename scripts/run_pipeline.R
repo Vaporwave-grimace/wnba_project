@@ -32,6 +32,7 @@ source(here("scripts", "injury_alert.R"))
 source(here("scripts", "shadow_model", "features.R"))
 source(here("scripts", "shadow_model", "predict.R"))
 source(here("scripts", "shadow_model", "mispricing.R"))
+source(here("scripts", "shadow_model", "calibrate_mispricing.R"))
 source(here("scripts", "rotowire_injuries.R"))
 source(here("scripts", "action_network.R"))
 source(here("scripts", "bet_alerts.R"))
@@ -170,6 +171,16 @@ if (hour_et() >= SETTLE_HOUR && !has_run_today("settle", con)) {
   }
 
   mark_run_today("settle", con)
+
+  # Mispricing model calibration — DEV_THRESHOLD sweep + injury accuracy check
+  if (!has_run_today("mispricing_calibration", con)) {
+    log_info("MORNING — running mispricing calibration sweep")
+    safe_run(
+      calibrate_mispricing_run(con, creds = creds, send_alert = FALSE),
+      "mispricing calibration"
+    )
+    mark_run_today("mispricing_calibration", con)
+  }
 }
 
 # ── Step 1: Opener odds snapshot (3 PM ET) ───────────────────────────────────
@@ -413,8 +424,21 @@ if (hour_et() >= MIDDAY_HOUR && !has_run_today("mispricing_model", con)) {
 
         # Action Network gate: sharp money on same side
         an_agrees <- isTRUE(an_confirms(row, an_data, home_t, away_t))
+        gate_passed <- steam_agrees || an_agrees
 
-        if (!steam_agrees && !an_agrees) {
+        # Log every detection to clv_log regardless of gate outcome.
+        # gate_passed=1 when alert fires; 0 when detected but gate failed.
+        # closing_line filled later by fill_mispricing_clv() in morning calibration.
+        tryCatch(
+          dbExecute(con, "
+            INSERT OR IGNORE INTO clv_log
+              (game_id, market, side, model_line, trigger, gate_passed)
+            VALUES (?, ?, ?, ?, 'mispricing', ?)
+          ", list(gid, mkt, model_side, row$adj_pinnacle, as.integer(gate_passed))),
+          error = \(e) message("[mispricing] clv_log write error: ", e$message)
+        )
+
+        if (!gate_passed) {
           log_info(sprintf("Mispricing %s %s %s — no steam or AN confirmation, skipping",
                            gid, mkt, toupper(model_side)))
           next

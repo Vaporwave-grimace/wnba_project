@@ -14,18 +14,32 @@ library(purrr)
 library(DBI)
 library(RSQLite)
 
-SHARP_BOOK    <- "pinnacle"
-SOFT_BOOKS    <- c("draftkings", "fanduel", "caesars", "betmgm", "betonlineag")
-DEV_THRESHOLD <- 1.5   # minimum point gap to flag (calibrate after 4-6 weeks)
+SHARP_BOOK            <- "pinnacle"
+SOFT_BOOKS            <- c("draftkings", "fanduel", "caesars", "betmgm", "betonlineag")
+DEV_THRESHOLD_DEFAULT <- 1.5   # fallback when model_config not yet populated
 
-# Injury impact on the combined game total (points per player).
-# Both teams' injured players reduce the total; calibrate against actual results.
-INJURY_IMPACT <- c(
-  "Out"          = -3.0,
-  "Doubtful"     = -2.0,
-  "Questionable" = -1.0,
-  "GTD"          = -1.0
-)
+# Load calibrated DEV_THRESHOLD from model_config; fall back to default.
+.get_dev_threshold <- function(con) {
+  tryCatch(
+    dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'dev_threshold'")$value[1] %||%
+      DEV_THRESHOLD_DEFAULT,
+    error = \(e) DEV_THRESHOLD_DEFAULT
+  )
+}
+
+# Injury impact per player — loaded dynamically so calibration can update them.
+.get_injury_impact <- function(con) {
+  defaults <- c(Out = -3.0, Doubtful = -2.0, Questionable = -1.0, GTD = -1.0)
+  params   <- c(Out = "injury_impact_out", Doubtful = "injury_impact_doubtful",
+                Questionable = "injury_impact_gtd", GTD = "injury_impact_gtd")
+  vapply(names(defaults), function(status) {
+    tryCatch(
+      dbGetQuery(con, "SELECT value FROM model_config WHERE param = ?",
+                 list(params[[status]]))$value[1] %||% defaults[[status]],
+      error = \(e) defaults[[status]]
+    )
+  }, numeric(1))
+}
 
 # ── Line helpers ──────────────────────────────────────────────────────────────
 
@@ -58,11 +72,13 @@ INJURY_IMPACT <- c(
 # total_adj is the signed point shift to apply to the Pinnacle total:
 #   negative = expect fewer combined points (players out → lower scoring).
 
-compute_injury_adjustment <- function(game_id, con, injuries_with_names = NULL) {
+compute_injury_adjustment <- function(game_id, con, injuries_with_names = NULL,
+                                      injury_impact = NULL) {
   zero <- list(home_adj = 0, away_adj = 0, total_adj = 0, n_injured = 0L,
                detail = character(0))
   if (is.null(injuries_with_names) || nrow(injuries_with_names) == 0) return(zero)
   if (!"team_name" %in% names(injuries_with_names)) return(zero)
+  if (is.null(injury_impact)) injury_impact <- .get_injury_impact(con)
 
   meta <- tryCatch(
     dbGetQuery(con, "
@@ -76,7 +92,7 @@ compute_injury_adjustment <- function(game_id, con, injuries_with_names = NULL) 
   away_lower <- tolower(meta$away_team[1])
 
   inj <- injuries_with_names |>
-    filter(!is.na(status), status %in% names(INJURY_IMPACT)) |>
+    filter(!is.na(status), status %in% names(injury_impact)) |>
     mutate(
       team_lower = tolower(team_name),
       is_home = vapply(team_lower, function(t)
@@ -86,7 +102,7 @@ compute_injury_adjustment <- function(game_id, con, injuries_with_names = NULL) 
         grepl(away_lower, t, fixed = TRUE) || grepl(t, away_lower, fixed = TRUE),
         logical(1)),
       in_game = is_home | is_away,
-      impact  = INJURY_IMPACT[status]
+      impact  = injury_impact[status]
     ) |>
     filter(in_game, !is.na(impact))
 
@@ -113,10 +129,12 @@ compute_injury_adjustment <- function(game_id, con, injuries_with_names = NULL) 
 #          deviation_pts, n_injured
 
 compute_mispricing <- function(game_id, con, injuries_with_names = NULL) {
-  results <- list()
+  results       <- list()
+  dev_threshold <- .get_dev_threshold(con)
+  injury_impact <- .get_injury_impact(con)
 
   # Shared injury adjustment (home/away/total)
-  inj <- compute_injury_adjustment(game_id, con, injuries_with_names)
+  inj <- compute_injury_adjustment(game_id, con, injuries_with_names, injury_impact)
   if (inj$n_injured > 0) {
     message(sprintf("[mispricing] %s — injury adj %.1f pts (%d player(s): %s)",
                     game_id, inj$total_adj, inj$n_injured,
@@ -137,7 +155,7 @@ compute_mispricing <- function(game_id, con, injuries_with_names = NULL) {
     if (nrow(soft_tot) > 0) {
       best_tot <- soft_tot |>
         mutate(deviation = soft_point - adj_tot, abs_dev = abs(deviation)) |>
-        filter(abs_dev >= DEV_THRESHOLD) |>
+        filter(abs_dev >= dev_threshold) |>
         arrange(desc(abs_dev)) |>
         slice(1)
 
@@ -190,7 +208,7 @@ compute_mispricing <- function(game_id, con, injuries_with_names = NULL) {
       if (nrow(soft_sp) > 0) {
         best_sp <- soft_sp |>
           mutate(deviation = soft_point - adj_sp, abs_dev = abs(deviation)) |>
-          filter(abs_dev >= DEV_THRESHOLD) |>
+          filter(abs_dev >= dev_threshold) |>
           arrange(desc(abs_dev)) |>
           slice(1)
 

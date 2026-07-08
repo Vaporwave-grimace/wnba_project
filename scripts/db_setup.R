@@ -248,6 +248,42 @@ init_db <- function(path = DB_PATH) {
     )
   ")
 
+  # Tunable model parameters — one row per param, auto-updated by calibration.
+  # Mirrors the MLB model_config pattern so calibrate_mispricing.R can
+  # read/write DEV_THRESHOLD and INJURY_IMPACT weights without code changes.
+  dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS model_config (
+      param       TEXT PRIMARY KEY,
+      value       REAL NOT NULL,
+      updated_at  TEXT DEFAULT (datetime('now')),
+      n_games     INTEGER,
+      brier_before REAL,
+      brier_after  REAL,
+      notes       TEXT
+    )
+  ")
+
+  # Seed default params if table was just created (INSERT OR IGNORE = idempotent)
+  defaults <- list(
+    list("dev_threshold",       1.5,   "initial seed — Pinnacle deviation gate (pts)"),
+    list("injury_impact_out",   -3.0,  "initial seed — Out player scoring impact"),
+    list("injury_impact_doubtful", -2.0, "initial seed"),
+    list("injury_impact_gtd",   -1.0,  "initial seed — GTD/Questionable impact")
+  )
+  for (d in defaults) {
+    dbExecute(con,
+      "INSERT OR IGNORE INTO model_config (param, value, notes) VALUES (?, ?, ?)",
+      d)
+  }
+
+  # Idempotent migration: gate_passed column on clv_log
+  # 1 = alert fired (passed steam/AN gate), 0 = detected but not alerted
+  clv_cols <- dbListFields(con, "clv_log")
+  if (!"gate_passed" %in% clv_cols) {
+    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN gate_passed INTEGER DEFAULT 0")
+    message("[db_setup] Migrated clv_log: added gate_passed column")
+  }
+
   message("Database initialized at: ", path)
   invisible(path)
 }
