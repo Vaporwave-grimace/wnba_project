@@ -1,4 +1,4 @@
-﻿# scripts/wnba_stats_api.R
+# scripts/wnba_stats_api.R
 # WNBA stats layer — powered by the wehoop package
 #
 # Uses ESPN-backed wehoop functions only (load_wnba_* / espn_wnba_*).

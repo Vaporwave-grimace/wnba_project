@@ -1,4 +1,4 @@
-﻿# scripts/shadow_model/seed.R
+# scripts/shadow_model/seed.R
 # Historical data bootstrapper
 #
 # Seeds the pipeline DB with 2023 and 2024 WNBA season data so the

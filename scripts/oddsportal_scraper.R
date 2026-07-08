@@ -1,4 +1,4 @@
-﻿# scripts/oddsportal_scraper.R
+# scripts/oddsportal_scraper.R
 # Backfill historical WNBA closing totals from OddsPortal via Firecrawl.
 #
 # Workflow:

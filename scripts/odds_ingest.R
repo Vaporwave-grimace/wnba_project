@@ -1,4 +1,4 @@
-﻿# scripts/odds_ingest.R
+# scripts/odds_ingest.R
 # The Odds API ingestion layer
 #
 # Handles:

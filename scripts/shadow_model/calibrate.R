@@ -1,4 +1,4 @@
-﻿# scripts/shadow_model/calibrate.R
+# scripts/shadow_model/calibrate.R
 # Calibration curve and CLV summary
 #
 # Queries the clv_log for completed games and generates:

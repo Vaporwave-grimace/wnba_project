@@ -1,4 +1,4 @@
-﻿# scripts/shadow_model/train.R
+# scripts/shadow_model/train.R
 # XGBoost model training for the WNBA shadow model
 #
 # Trains two separate tidymodels workflows:

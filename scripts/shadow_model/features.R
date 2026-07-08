@@ -1,4 +1,4 @@
-﻿# scripts/shadow_model/features.R
+# scripts/shadow_model/features.R
 # Feature engineering layer for the WNBA shadow model
 #
 # Two entry points:
