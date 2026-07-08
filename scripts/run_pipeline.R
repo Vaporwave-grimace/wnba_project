@@ -32,6 +32,8 @@ source(here("scripts", "injury_alert.R"))
 source(here("scripts", "shadow_model", "features.R"))
 source(here("scripts", "shadow_model", "predict.R"))
 source(here("scripts", "shadow_model", "mispricing.R"))
+source(here("scripts", "rotowire_injuries.R"))
+source(here("scripts", "action_network.R"))
 source(here("scripts", "bet_alerts.R"))
 source(here("scripts", "wnba_settle.R"))
 
@@ -348,22 +350,31 @@ if (hour_et() >= MIDDAY_HOUR && !has_run_today("mispricing_model", con)) {
     error = \(e) tibble(game_id = character(0))
   )
 
-  # Fresh injury snapshot with team names for injury-adjusted Pinnacle line
-  injuries_raw <- safe_run(fetch_all_injuries(), "fetch injuries for mispricing model")
-  injuries_with_names <- if (!is.null(injuries_raw) && nrow(injuries_raw) > 0) {
-    teams_map <- safe_run(fetch_espn_teams(), "fetch ESPN team names")
-    if (!is.null(teams_map) && "team_id" %in% names(injuries_raw))
-      left_join(injuries_raw, teams_map, by = "team_id")
-    else
-      injuries_raw
+  # ── Injury snapshot: ESPN + RotoWire merged ───────────────────────────────────
+  espn_raw  <- safe_run(fetch_all_injuries(), "ESPN injuries")
+  espn_named <- if (!is.null(espn_raw) && nrow(espn_raw) > 0) {
+    teams_map <- safe_run(fetch_espn_teams(), "ESPN team names")
+    if (!is.null(teams_map) && "team_id" %in% names(espn_raw))
+      left_join(espn_raw, teams_map, by = "team_id")
+    else espn_raw
   } else NULL
 
-  # Steam today for direction gate (totals only)
-  steam_totals <- tryCatch(
+  rw_raw <- safe_run(fetch_rotowire_injuries(), "RotoWire injuries")
+
+  injuries_with_names <- merge_injury_sources(espn_named, rw_raw)
+  if (nrow(injuries_with_names) == 0) injuries_with_names <- NULL
+
+  # ── Action Network sharp money (secondary gate) ───────────────────────────────
+  an_data <- safe_run(
+    fetch_wnba_sharp_report(date = as.Date(format(now_et(), "%Y-%m-%d"))),
+    "Action Network sharp report"
+  )
+
+  # ── Steam movements today (primary gate, totals + spreads) ───────────────────
+  steam_today_all <- tryCatch(
     dbGetQuery(con, "
-      SELECT game_id, direction FROM steam_movements
+      SELECT game_id, direction, market FROM steam_movements
       WHERE DATE(detected_at) = ?
-        AND market = 'totals'
     ", list(format(now_et(), "%Y-%m-%d"))) |> as_tibble(),
     error = \(e) tibble()
   )
@@ -376,34 +387,57 @@ if (hour_et() >= MIDDAY_HOUR && !has_run_today("mispricing_model", con)) {
       )
       if (is.null(misprice)) return(invisible(NULL))
 
-      # Steam gate: steam direction must agree with model side.
-      # direction='down' → books lowering total = sharp UNDER money → confirms UNDER
-      # direction='up'   → books raising total  = sharp OVER money  → confirms OVER
-      game_steam   <- filter(steam_totals, game_id == gid)
-      model_side   <- misprice$side[1]
-      steam_agrees <- nrow(game_steam) > 0 && any(
-        (model_side == "under" & game_steam$direction == "down") |
-        (model_side == "over"  & game_steam$direction == "up")
+      # Get game teams for AN lookup
+      meta <- tryCatch(
+        dbGetQuery(con, "SELECT DISTINCT home_team, away_team FROM lines WHERE game_id = ? LIMIT 1",
+                   list(gid)) |> as_tibble(),
+        error = \(e) tibble()
       )
+      home_t <- if (nrow(meta) > 0) meta$home_team[1] else ""
+      away_t <- if (nrow(meta) > 0) meta$away_team[1] else ""
 
-      if (!steam_agrees) {
-        log_info("Mispricing found for", gid, "— no confirming steam, skipping alert")
-        return(invisible(NULL))
-      }
-
+      # Each mispricing row is one market (totals or spreads) — gate per row
       for (j in seq_len(nrow(misprice))) {
+        row        <- misprice[j, ]
+        mkt        <- row$market
+        model_side <- row$side
+
+        # Steam gate: direction must match model side for this market
+        game_steam <- steam_today_all |>
+          filter(game_id == gid, grepl(sub("s$", "", mkt), market, ignore.case = TRUE))
+
+        steam_agrees <- nrow(game_steam) > 0 && any(
+          (model_side %in% c("under", "away") & game_steam$direction == "down") |
+          (model_side %in% c("over",  "home")  & game_steam$direction == "up")
+        )
+
+        # Action Network gate: sharp money on same side
+        an_agrees <- isTRUE(an_confirms(row, an_data, home_t, away_t))
+
+        if (!steam_agrees && !an_agrees) {
+          log_info(sprintf("Mispricing %s %s %s — no steam or AN confirmation, skipping",
+                           gid, mkt, toupper(model_side)))
+          next
+        }
+
+        gate_source <- if (steam_agrees && an_agrees) "steam+AN"
+                       else if (steam_agrees) "steam"
+                       else "AN"
+        log_info(sprintf("Alert gate passed for %s %s %s [%s]",
+                         gid, mkt, toupper(model_side), gate_source))
+
         safe_run(
           emit_wnba_bet_alert(
-            game_id         = misprice$game_id[j],
-            market          = misprice$market[j],
-            side            = misprice$side[j],
-            model_line      = misprice$adj_pinnacle[j],
-            mkt_line        = misprice$soft_line[j],
+            game_id         = row$game_id,
+            market          = row$market,
+            side            = row$side,
+            model_line      = row$adj_pinnacle,
+            mkt_line        = row$soft_line,
             con             = con,
             creds           = creds,
-            steam_confirmed = TRUE
+            steam_confirmed = steam_agrees   # HIGH confidence if steam confirmed
           ),
-          paste("mispricing alert for", misprice$game_id[j], misprice$market[j])
+          paste("mispricing alert for", gid, mkt)
         )
       }
     })
