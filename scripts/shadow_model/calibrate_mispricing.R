@@ -15,6 +15,7 @@ library(dplyr)
 library(purrr)
 library(DBI)
 library(RSQLite)
+library(httr2)
 
 # ROI at standard -110 juice (decimal = 100/110 = 0.909 payout per dollar wagered)
 JUICE_DECIMAL      <- 1.9091   # $1 wagered returns $1.9091 if won

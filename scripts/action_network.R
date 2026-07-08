@@ -113,19 +113,22 @@ fetch_wnba_sharp_report <- function(date = Sys.Date()) {
 #
 # Returns TRUE / FALSE. Returns FALSE on any data gap (non-fatal).
 
-an_confirms <- function(model_row, an_data, home_team, away_team,
+an_confirms <- function(model_row, an_data, home_t, away_t,
                          gap = SHARP_GAP_MIN) {
   if (is.null(an_data) || nrow(an_data) == 0) return(FALSE)
 
   mkt  <- model_row$market[1]
   side <- model_row$side[1]
 
-  # Match game: fuzzy last-word match on team names
-  last_word <- function(x) tail(strsplit(tolower(x), " ")[[1]], 1)
+  # Match game: fuzzy last-word match on team names.
+  # Use local vars (not dplyr column names) so filter() sees the right values.
+  last_word  <- function(x) tail(strsplit(tolower(x), " ")[[1]], 1)
+  lw_home    <- last_word(home_t)
+  lw_away    <- last_word(away_t)
   game_rows <- an_data |>
     filter(
-      grepl(last_word(home_team), tolower(home_team), fixed = TRUE) |
-        grepl(last_word(away_team), tolower(away_team), fixed = TRUE)
+      grepl(lw_home, tolower(home_team), fixed = TRUE) |
+        grepl(lw_away, tolower(away_team), fixed = TRUE)
     )
 
   if (nrow(game_rows) == 0) return(FALSE)
