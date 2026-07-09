@@ -374,33 +374,52 @@ send_discord <- function(message_text, creds,
   invisible(FALSE)
 }
 
-# Format a discrepancy row into a human-readable alert string
-format_discrepancy_alert <- function(disc_row, injury_status) {
+# Discord channel for injury discrepancy + FYI injury alerts — same channel as
+# steam alerts (STEAM_CHANNEL_ID in run_pipeline.R), not #auto-bet-broadcast.
+# Hardcoded here (not read from run_pipeline.R's global) so this file doesn't
+# depend on being sourced in a specific order to work correctly.
+DISCREPANCY_CHANNEL_ID <- "1521690907760525342"  # #steam-alerts
+
+# Format ONE consolidated alert for all discrepancy rows belonging to the same
+# (player, game) — a player can legitimately have several qualifying steam
+# movements for one real game (totals + spreads, over + under), and those
+# should read as one event, not one message per row.
+format_discrepancy_alert <- function(disc_rows, injury_status) {
+  r1 <- disc_rows[1, ]
+  n  <- nrow(disc_rows)
+  moves_str <- paste0(round(sort(disc_rows$line_delta, decreasing = TRUE), 2), " pts",
+                      collapse = ", ")
   paste0(
     "⚠️ *INJURY DISCREPANCY*\n",
-    "*Player:* ", disc_row$player_name, " (", injury_status, ")\n",
-    "*Game:* ", disc_row$game_id, "\n",
-    "*Line moved:* ", disc_row$line_moved_at, " UTC\n",
-    "*Injury reported:* ", disc_row$injury_reported_at, " UTC\n",
-    "*Lead time:* ", round(disc_row$lag_minutes, 1), " min before report\n",
-    "*Move size:* ", round(disc_row$line_delta, 2), " pts"
+    "*Player:* ", r1$player_name, " (", injury_status, ")\n",
+    "*Game:* ", r1$game_id, "\n",
+    "*Injury reported:* ", r1$injury_reported_at, " UTC\n",
+    "*Lead time:* ", round(min(disc_rows$lag_minutes), 1), "-",
+    round(max(disc_rows$lag_minutes), 1), " min before report\n",
+    "*Move", if (n > 1) "s" else "", " (", n, "):* ", moves_str
   )
 }
 
-# Send alerts for all flagged discrepancies
+# Send one alert per (player, game) — consolidating multiple qualifying steam
+# movements for the same real discrepancy into a single message instead of
+# one per row. Routes to #steam-alerts (DISCREPANCY_CHANNEL_ID), not
+# #auto-bet-broadcast — this is diagnostic/confirmatory signal, not a bet pick.
 alert_discrepancies <- function(discrepancies, new_injuries, creds) {
   if (nrow(discrepancies) == 0) return(invisible(NULL))
 
-  for (i in seq_len(nrow(discrepancies))) {
-    row    <- discrepancies[i, ]
+  groups <- discrepancies |>
+    group_by(player_name, game_id) |>
+    group_split()
+
+  for (grp in groups) {
     status <- new_injuries |>
-      filter(player_name == row$player_name) |>
+      filter(player_name == grp$player_name[1]) |>
       pull(status) |>
       first() %||% "Unknown"
 
-    msg <- format_discrepancy_alert(row, status)
+    msg <- format_discrepancy_alert(grp, status)
     send_telegram(msg, creds)
-    send_discord(msg, creds)
+    send_discord(msg, creds, channel_id = DISCREPANCY_CHANNEL_ID)
     Sys.sleep(1)  # avoid rate limiting between alerts
   }
 }
@@ -455,11 +474,12 @@ run_injury_check <- function(con, creds, alert_all_injuries = FALSE) {
   new_entries <- save_new_injuries(fresh, con)
 
   # Optionally alert on all new injury reports regardless of discrepancy
+  # (routed to #steam-alerts too, same reasoning as alert_discrepancies())
   if (alert_all_injuries && nrow(new_entries) > 0) {
     for (i in seq_len(nrow(new_entries))) {
       msg <- format_injury_alert(new_entries[i, ])
       send_telegram(msg, creds)
-      send_discord(msg, creds)
+      send_discord(msg, creds, channel_id = DISCREPANCY_CHANNEL_ID)
       Sys.sleep(1)
     }
   }

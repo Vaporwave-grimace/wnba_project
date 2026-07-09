@@ -524,8 +524,14 @@ run_collection <- function(snapshot_type, con, compare_to = NULL) {
   steam <- tibble()
 
   if (!is.null(compare_to) && nrow(odds) > 0) {
+    # Scoped to today (2026-07-09 hardening, same fix as run_pipeline.R's Step
+    # 3b continuous check) — without this, `prior` pulls every game that ever
+    # had this snapshot_type, all season. Lower risk here than Step 3b's bug
+    # was (the inner_join against `odds`, which is always a fresh fetch of
+    # today's real games, already restricts matches in practice) but scoping
+    # explicitly removes the dependency on that side-effect.
     prior <- dbGetQuery(con, "
-      SELECT * FROM lines WHERE snapshot_type = ?
+      SELECT * FROM lines WHERE snapshot_type = ? AND DATE(pulled_at) = DATE('now')
     ", list(compare_to)) |> as_tibble()
 
     if (nrow(prior) > 0) {

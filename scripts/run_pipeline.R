@@ -278,10 +278,25 @@ continuous_steam <- tryCatch({
     type_early <- recent_snaps$snapshot_type[2]
 
     if (type_late != type_early) {
-      snap_late  <- dbGetQuery(con, "SELECT * FROM lines WHERE snapshot_type = ?",
-                               list(type_late))  |> as_tibble()
-      snap_early <- dbGetQuery(con, "SELECT * FROM lines WHERE snapshot_type = ?",
-                               list(type_early)) |> as_tibble()
+      # BUG FIXED 2026-07-09: these queries had no date scope at all, unlike
+      # recent_snaps above. Every 30-min cycle, this pulled EVERY game that
+      # ever had these two snapshot_type labels -- i.e. the entire season's
+      # completed games -- and re-ran detect_steam() on them, which stamps
+      # detected_at = now(). That silently wrote a fresh "steam detected
+      # today" row into steam_movements for every old game with any
+      # midday->closing price difference, every single cycle, all season.
+      # Confirmed live: games from 2026-06-21 through 07-04 had steam_movements
+      # rows with detected_at = 2026-07-09, which fed a bogus injury-discrepancy
+      # alert flood (a player's team's OLD completed games all "matched").
+      # Scoping to today's pulled_at (same filter recent_snaps already uses)
+      # restricts detect_steam() to today's real games only.
+      today_str  <- format(now_et(), "%Y-%m-%d")
+      snap_late  <- dbGetQuery(con,
+        "SELECT * FROM lines WHERE snapshot_type = ? AND DATE(pulled_at) = ?",
+        list(type_late, today_str))  |> as_tibble()
+      snap_early <- dbGetQuery(con,
+        "SELECT * FROM lines WHERE snapshot_type = ? AND DATE(pulled_at) = ?",
+        list(type_early, today_str)) |> as_tibble()
 
       log_info("Continuous steam check: comparing '", type_early, "' → '", type_late, "'")
       cont_steam <- detect_steam(snap_early, snap_late, con = con)
