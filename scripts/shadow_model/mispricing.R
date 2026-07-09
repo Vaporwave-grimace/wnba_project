@@ -15,7 +15,10 @@ library(DBI)
 library(RSQLite)
 
 SHARP_BOOK            <- "pinnacle"
-SOFT_BOOKS            <- c("draftkings", "fanduel", "caesars", "betmgm", "betonlineag")
+# "caesars" removed 2026-07-09 — confirmed never present for WNBA under any
+# region combo tested (live check against a real Odds API response); books
+# get renamed/added over time so recheck before assuming a name is dead.
+SOFT_BOOKS            <- c("draftkings", "fanduel", "betmgm", "betonlineag")
 DEV_THRESHOLD_DEFAULT <- 1.5   # fallback when model_config not yet populated
 
 # Load calibrated DEV_THRESHOLD from model_config; fall back to default.

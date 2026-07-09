@@ -346,12 +346,12 @@ record_clv_entry <- function(steam_df, con) {
         SELECT point FROM lines
         WHERE game_id = ? AND market = ? AND outcome_name = ?
           AND bookmaker IN (
-            'pinnacle','betonlineag','bookmaker','lowvig','draftkings','fanduel'
+            'pinnacle','betonlineag','lowvig','draftkings','fanduel'
           )
         ORDER BY CASE bookmaker
           WHEN 'pinnacle'   THEN 1 WHEN 'betonlineag' THEN 2
-          WHEN 'bookmaker'  THEN 3 WHEN 'lowvig'      THEN 4
-          WHEN 'draftkings' THEN 5 WHEN 'fanduel'     THEN 6 ELSE 7 END,
+          WHEN 'lowvig'     THEN 3
+          WHEN 'draftkings' THEN 4 WHEN 'fanduel'     THEN 5 ELSE 6 END,
           pulled_at DESC
         LIMIT 1
       ", list(row$game_id, row$market, row$outcome_name))$point,
@@ -407,12 +407,12 @@ compute_wnba_clv <- function(con) {
         WHERE game_id = ? AND market = ? AND outcome_name = ?
           AND snapshot_type = 'closing'
           AND bookmaker IN (
-            'pinnacle','betonlineag','bookmaker','lowvig','draftkings','fanduel'
+            'pinnacle','betonlineag','lowvig','draftkings','fanduel'
           )
         ORDER BY CASE bookmaker
           WHEN 'pinnacle'   THEN 1 WHEN 'betonlineag' THEN 2
-          WHEN 'bookmaker'  THEN 3 WHEN 'lowvig'      THEN 4
-          WHEN 'draftkings' THEN 5 WHEN 'fanduel'     THEN 6 ELSE 7 END
+          WHEN 'lowvig'     THEN 3
+          WHEN 'draftkings' THEN 4 WHEN 'fanduel'     THEN 5 ELSE 6 END
         LIMIT 1
       ", list(row$game_id, row$market, row$side))$point,
       error = function(e) NA_real_

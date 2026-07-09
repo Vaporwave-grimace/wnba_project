@@ -485,7 +485,7 @@ if (h >= 8L && h <= 23L) {
 run_end   <- now("UTC")
 today_str <- format(now_et(), "%Y-%m-%d")
 
-BOOK_PREF <- c("pinnacle", "betonlineag", "bookmaker", "lowvig", "draftkings", "fanduel")
+BOOK_PREF <- c("pinnacle", "betonlineag", "lowvig", "draftkings", "fanduel")
 
 # ── 1. Today's slate with current lines ───────────────────────────────────────
 

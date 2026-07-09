@@ -126,116 +126,13 @@ run_prediction <- function(game_id, steam_row, con, team_box = NULL) {
   invisible(combined)
 }
 
-# ── Schedule-triggered prediction (no steam required) ────────────────────────
-
-# Runs both models on a game at a fixed pre-tip time (called from the
-# pregame_model step in run_pipeline.R). Unlike run_prediction(), this does
-# not need a steam_row — it determines the bet side purely from model direction
-# vs the current market line, and marks the clv_log row with trigger='pregame'.
-#
-# Returns a tibble with the same columns as run_prediction() (compatible with
-# emit_wnba_bet_alert), or NULL if models/features unavailable.
-
-run_prediction_pregame <- function(game_id, con, team_box = NULL) {
-  models <- tryCatch(load_models(), error = function(e) {
-    message("[predict] Cannot load models — ", conditionMessage(e))
-    return(NULL)
-  })
-  if (is.null(models)) return(invisible(NULL))
-
-  feats <- tryCatch(
-    build_features(game_id, con, team_box),
-    error = function(e) {
-      message("[predict] Feature build failed for ", game_id, ": ", conditionMessage(e))
-      NULL
-    }
-  )
-  if (is.null(feats)) return(invisible(NULL))
-
-  now_str      <- format(now("UTC"), "%Y-%m-%d %H:%M:%S")
-  today_str    <- format(with_tz(now("UTC"), "America/New_York"), "%Y-%m-%d")
-  totals_feat  <- feats |> filter(market == "totals")
-  spreads_feat <- feats |> filter(market == "spreads")
-
-  log_rows <- list()
-
-  if (nrow(totals_feat) > 0) {
-    # Skip if a pregame row already exists today (steam-triggered row is fine to
-    # coexist, but duplicate pregame writes should be avoided).
-    already <- tryCatch(
-      dbGetQuery(con,
-        "SELECT COUNT(*) AS n FROM clv_log
-         WHERE game_id = ? AND market = 'totals'
-           AND trigger = 'pregame' AND DATE(logged_at) = ?",
-        list(game_id, today_str))$n > 0,
-      error = \(e) FALSE
-    )
-    if (!already) {
-      pred_total <- predict(models$totals, new_data = totals_feat)$.pred
-      mkt_total  <- coalesce(totals_feat$midday_line[1], totals_feat$opener_line[1])
-      side_total <- if (!is.na(mkt_total) && pred_total < mkt_total) "under" else "over"
-
-      log_rows[["totals"]] <- tibble(
-        game_id            = game_id,
-        market             = "totals",
-        side               = side_total,
-        model_line         = pred_total,
-        market_line_at_bet = mkt_total,
-        closing_line       = NA_real_,
-        clv                = NA_real_,
-        logged_at          = now_str,
-        trigger            = "pregame"
-      )
-    }
-  }
-
-  if (nrow(spreads_feat) > 0) {
-    already <- tryCatch(
-      dbGetQuery(con,
-        "SELECT COUNT(*) AS n FROM clv_log
-         WHERE game_id = ? AND market = 'spreads'
-           AND trigger = 'pregame' AND DATE(logged_at) = ?",
-        list(game_id, today_str))$n > 0,
-      error = \(e) FALSE
-    )
-    if (!already) {
-      pred_spread <- predict(models$spreads, new_data = spreads_feat)$.pred
-      mkt_spread  <- coalesce(spreads_feat$midday_line[1], spreads_feat$opener_line[1])
-      # Positive spread = home team gives points; model < mkt means home is
-      # better value than priced → bet "home" (they cover more than the line).
-      side_spread <- if (!is.na(mkt_spread) && pred_spread < mkt_spread) "home" else "away"
-
-      log_rows[["spreads"]] <- tibble(
-        game_id            = game_id,
-        market             = "spreads",
-        side               = side_spread,
-        model_line         = pred_spread,
-        market_line_at_bet = mkt_spread,
-        closing_line       = NA_real_,
-        clv                = NA_real_,
-        logged_at          = now_str,
-        trigger            = "pregame"
-      )
-    }
-  }
-
-  if (length(log_rows) == 0) return(invisible(NULL))
-
-  combined <- bind_rows(log_rows)
-  tryCatch(
-    dbAppendTable(con, "clv_log", combined),
-    error = function(e) message("[predict] clv_log write failed: ", e$message)
-  )
-
-  tot_str <- if (!is.null(log_rows$totals))
-    paste0(log_rows$totals$side, " ", round(log_rows$totals$model_line, 1)) else "—"
-  spr_str <- if (!is.null(log_rows$spreads))
-    paste0(log_rows$spreads$side, " ", round(log_rows$spreads$model_line, 1)) else "—"
-  message("[predict] Pregame CLV log for ", game_id,
-          " [totals: ", tot_str, " | spreads: ", spr_str, "]")
-
-  invisible(combined)
-}
+# NOTE (2026-07-09): a `run_prediction_pregame()` function used to live here —
+# schedule-triggered inference with trigger='pregame', for the pregame_model
+# step in run_pipeline.R. That step was deleted in the mispricing refactor
+# (commit b5eb4fd); removed the orphaned function too (its header comment
+# falsely claimed it was still called from run_pipeline.R — confirmed via
+# grep it wasn't, and clv_log has zero trigger='pregame' rows, ever). The
+# steam-triggered path above (run_prediction()) is still live and unaffected.
 
 # ── Post-game CLV update ──────────────────────────────────────────────────────
 

@@ -5,10 +5,17 @@
 #   1. Required packages present
 #   2. Credentials file loads and is well-formed
 #   3. DB initializes cleanly
-#   4. The Odds API responds and returns WNBA games
+#   4. The Odds API responds, returns WNBA games, AND includes Pinnacle
+#      (regions must include "eu" — this is the actual regression guard for
+#      the 2026-07-09 bug where the mispricing model never got Pinnacle data)
 #   5. stats.wnba.com responds and returns data
-#   6. ESPN API responds and returns WNBA teams
-#   7. Telegram bot is reachable
+#   6. ESPN API responds AND fetch_all_injuries() parses real non-Active
+#      statuses (not just HTTP 200 — that alone missed the 2026-07-09 bug
+#      where the status field always resolved to "Active")
+#   7. Action Network endpoint responds (split data requires their PRO tier —
+#      0 rows with real splits is expected, not a failure)
+#   8. RotoWire fails safe (known disabled — see rotowire_injuries.R)
+#   9. Telegram bot is reachable
 #
 # Run with:  Rscript scripts/test_pipeline.R
 
@@ -112,10 +119,15 @@ check("WNBA sport key exists", {
 })
 
 odds_data <- check("WNBA odds endpoint returns data", {
+  # regions MUST include "eu" — Pinnacle (the sharp-book reference the whole
+  # mispricing model depends on) is only returned under "eu", never "us"
+  # alone. Confirmed live 2026-07-09 after finding the mispricing model had
+  # never fired once because of this exact regions="us"-only mistake in
+  # odds_ingest.R. Keep this in sync with fetch_wnba_odds()'s default there.
   resp <- request("https://api.the-odds-api.com/v4/sports/basketball_wnba/odds") |>
     req_url_query(
       apiKey     = odds_key,
-      regions    = "us",
+      regions    = "us,eu",
       markets    = "spreads,totals",
       oddsFormat = "american"
     ) |>
@@ -134,6 +146,19 @@ if (!is.null(odds_data) && length(odds_data) > 0) {
     missing  <- setdiff(required, names(g))
     if (length(missing) > 0) stop("missing fields: ", paste(missing, collapse = ", "))
     cat(sprintf("     Sample: %s @ %s\n", g$away_team, g$home_team))
+    TRUE
+  })
+
+  check("Pinnacle present in at least one game's bookmakers", {
+    # This is the actual regression guard for the 2026-07-09 Pinnacle bug —
+    # asserting HTTP 200 alone (as this file did before) would NOT have
+    # caught it, since the request succeeded fine, it just never included
+    # Pinnacle. If this ever fails again, check the `regions` param above
+    # AND fetch_wnba_odds()'s default in odds_ingest.R.
+    has_pinnacle <- any(vapply(odds_data, function(g) {
+      any(vapply(g$bookmakers %||% list(), function(b) identical(b$key, "pinnacle"), logical(1)))
+    }, logical(1)))
+    if (!has_pinnacle) stop("no game had a Pinnacle line — mispricing model would silently get nothing")
     TRUE
   })
 }
@@ -193,8 +218,62 @@ if (!is.null(espn_teams) && length(espn_teams) > 0) {
   })
 }
 
-# ── 7. Telegram ───────────────────────────────────────────────────────────────
-section("7. Telegram")
+# This calls the REAL fetch_all_injuries() end-to-end, not just an HTTP 200
+# check — a plain "did the request succeed" assertion (as this file had
+# before) would NOT have caught the 2026-07-09 bug where ESPN's status field
+# always parsed to "Active" regardless of real injury status: the request
+# succeeded fine every single time, it just parsed to the wrong value.
+source(here("scripts", "injury_alert.R"))
+
+check("fetch_all_injuries() parses at least one real non-Active status", {
+  inj <- fetch_all_injuries()
+  cat(sprintf("     Injured players found: %d\n", nrow(inj)))
+  if (nrow(inj) > 0) cat(sprintf("     Sample: %s (%s)\n", inj$player_name[1], inj$status[1]))
+  # Don't hard-fail on 0 (a genuinely healthy league week is possible), but do
+  # fail if the status parsing regresses to literally always "Active" despite
+  # nonzero rows, which is the exact shape of bug this test exists to catch.
+  if (nrow(inj) > 0 && all(inj$status == "Active"))
+    stop("all parsed statuses are 'Active' — status field parsing likely broken again")
+  TRUE
+})
+
+# ── 7. Action Network ─────────────────────────────────────────────────────────
+section("7. Action Network")
+
+source(here("scripts", "action_network.R"))
+
+check("scoreboard endpoint responds (not the old dead games? endpoint)", {
+  an_data <- fetch_wnba_sharp_report()
+  if (is.null(an_data) || nrow(an_data) == 0) stop("no rows returned — endpoint may be down again")
+  n_split <- sum(!is.na(an_data$sharp_score))
+  cat(sprintf("     Rows: %d  |  with real split data: %d\n", nrow(an_data), n_split))
+  # Real split % data is an Action Network PRO-tier feature (confirmed
+  # 2026-07-09 via their own page's "Save Big on PRO!" upsell) — 0 is the
+  # expected, not-broken state without a paid plan. This check only confirms
+  # the endpoint itself still responds with well-formed rows.
+  if (n_split == 0)
+    cat("     (0 with split data is expected — PRO-tier feature, not a failure)\n")
+  TRUE
+})
+
+# ── 8. RotoWire (known disabled) ──────────────────────────────────────────────
+section("8. RotoWire (known disabled)")
+
+source(here("scripts", "rotowire_injuries.R"))
+
+check("fetch_rotowire_injuries() fails safe (returns empty, doesn't error)", {
+  # Deliberately disabled 2026-07-09 — the injury page is a Webix virtualized
+  # grid that rvest's html_table() cannot parse (see rotowire_injuries.R for
+  # the full investigation). This check exists only to confirm the disabled
+  # stub keeps returning an empty tibble gracefully, not to test real scraping.
+  rw <- fetch_rotowire_injuries()
+  if (!is.data.frame(rw)) stop("expected a data frame/tibble, got: ", class(rw)[1])
+  if (nrow(rw) != 0) cat("     NOTE: RotoWire returned non-empty data — has it been re-enabled?\n")
+  TRUE
+})
+
+# ── 9. Telegram ───────────────────────────────────────────────────────────────
+section("9. Telegram")
 
 check("Bot is reachable (getMe)", {
   token <- creds$telegram_bot_token
@@ -220,8 +299,8 @@ check("Test message sends to chat", {
   TRUE
 })
 
-# ── 8. Discord ────────────────────────────────────────────────────────────────
-section("8. Discord")
+# ── 10. Discord ───────────────────────────────────────────────────────────────
+section("10. Discord")
 
 check("Test message sends to webhook", {
   resp <- request(creds$discord_webhook_url) |>

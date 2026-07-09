@@ -50,7 +50,7 @@ MIN_EV_PCT <- 3.0
 # Best available line for a specific market + outcome_name, from the most
 # recent snapshot for the game.  Returns list(book, odds, point).
 .best_book_odds <- function(game_id, market, outcome_name, con) {
-  BOOK_PREF <- c("pinnacle", "betonlineag", "bookmaker", "lowvig",
+  BOOK_PREF <- c("pinnacle", "betonlineag", "lowvig",
                  "draftkings", "fanduel")
   rows <- tryCatch(
     dbGetQuery(con, "
