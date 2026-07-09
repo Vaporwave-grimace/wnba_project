@@ -90,14 +90,24 @@ fetch_team_roster <- function(team_id) {
   if (length(player_list) == 0) return(empty)
 
   map_dfr(player_list, function(a) {
-    # ESPN returns status as either:
-    #   (old) a list {type: {description: "Active"}}
-    #   (new) a plain character string "Active"
+    # `a$status` is a roster-membership flag, not injury status — as of 2026-07,
+    # ESPN returns {id, name:"Active", type:"active", abbreviation} for EVERY
+    # rostered player regardless of actual injury (confirmed live 2026-07-09:
+    # two genuinely-injured players, Brionna Jones and Aaliyah Nye, both showed
+    # status$name == "Active"). The real per-player injury status lives at
+    # a$injuries[[1]]$status (e.g. "Out", "Questionable", "Doubtful"). Fall back
+    # through older/flat a$status shapes only when no injuries entry exists.
     p_status <- tryCatch({
-      s <- a$status
-      if (is.character(s))        s                         # new flat format
-      else if (!is.null(s$type))  s$type$description %||% "Active"  # old nested
-      else "Active"
+      inj_status <- a$injuries[[1]]$status
+      if (!is.null(inj_status) && is.character(inj_status) && nzchar(inj_status)) {
+        inj_status
+      } else {
+        s <- a$status
+        if (is.character(s))              s                               # flat string
+        else if (is.character(s$name))     s$name %||% "Active"            # current shape
+        else if (!is.null(s$type) && is.list(s$type)) s$type$description %||% "Active"  # old nested
+        else "Active"
+      }
     }, error = function(e) "Active")
 
     injury_type <- tryCatch(a$injuries[[1]]$type$description %||% NA_character_,
@@ -126,14 +136,20 @@ fetch_all_injuries <- function() {
   if (nrow(rosters) == 0 || !"status" %in% names(rosters)) {
     message("[injury] No roster data returned — ESPN API may have changed structure.")
     return(tibble(
-      player_name = character(), team_id   = character(),
+      player_name = character(), team_name   = character(),
       status      = character(), injury_type = character(),
       source      = character(), reported_at = character()
     ))
   }
 
+  # team_name (not `team`) — mispricing.R's compute_injury_adjustment() requires
+  # this exact column name (`if (!"team_name" %in% names(injuries_with_names))
+  # return(zero)`). Joined here so run_pipeline.R no longer needs its own
+  # separate team_id -> team_name join before merging with RotoWire.
   rosters |>
     filter(status != "Active") |>
+    left_join(teams |> select(team_id, team_name), by = "team_id") |>
+    select(-team_id) |>
     mutate(
       source      = "ESPN",
       reported_at = format(now("UTC"), "%Y-%m-%d %H:%M:%S")
@@ -158,11 +174,16 @@ save_new_injuries <- function(fresh_df, con) {
   ") |> as_tibble()
 
   # Flag players whose status has changed or who are newly injured
+  # NOTE: injury_reports (db_setup.R schema) has a `team` column, but
+  # mispricing.R's compute_injury_adjustment() requires `team_name` on the
+  # data passed *to it* — fetch_all_injuries() outputs team_name for that
+  # reason, and it's renamed to `team` here, at the DB-write boundary, rather
+  # than propagating one name through both consumers.
   new_entries <- fresh_df |>
     left_join(existing, by = "player_name", suffix = c("_new", "_old")) |>
     filter(is.na(status_old) | status_new != status_old) |>
-    rename(status = status_new) |>
-    select(player_name, team_id, status, injury_type, source, reported_at)
+    rename(status = status_new, team = team_name) |>
+    select(player_name, team, status, injury_type, source, reported_at)
 
   if (nrow(new_entries) == 0) {
     message("No new injury status changes detected.")
@@ -174,7 +195,8 @@ save_new_injuries <- function(fresh_df, con) {
     message("  ", new_entries$player_name[i], " — ", new_entries$status[i])
   })
 
-  dbAppendTable(con, "injury_reports", new_entries)
+  dbAppendTable(con, "injury_reports",
+                new_entries |> select(player_name, team, status, reported_at, source))
   new_entries
 }
 
@@ -199,13 +221,25 @@ check_discrepancies <- function(new_injuries, con) {
     report_time <- ymd_hms(injury$reported_at, tz = "UTC")
     window_start <- report_time - minutes(DISC_WINDOW_MINS)
 
-    # Pull steam movements in the window before the report
-    steam <- dbGetQuery(con, "
+    # Find the game_id(s) for this player's team
+    game_row <- dbGetQuery(con, "
+      SELECT game_id
+      FROM games
+      WHERE home_team = ? OR away_team = ?
+    ", list(injury$team, injury$team)) |> as_tibble()
+
+    if (nrow(game_row) == 0) return(tibble())
+
+    game_ids <- game_row$game_id
+
+    # Pull steam movements in the window before the report, filtered to this game
+    steam <- dbGetQuery(con, sprintf("
       SELECT *
       FROM steam_movements
-      WHERE detected_at >= ?
+      WHERE game_id IN (%s)
+        AND detected_at >= ?
         AND detected_at <  ?
-    ", list(
+    ", paste0("'", game_ids, "'", collapse = ",")), list(
       format(window_start, "%Y-%m-%d %H:%M:%S"),
       format(report_time,  "%Y-%m-%d %H:%M:%S")
     )) |> as_tibble()

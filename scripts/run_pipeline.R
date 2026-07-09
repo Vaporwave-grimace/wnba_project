@@ -362,13 +362,9 @@ if (hour_et() >= MIDDAY_HOUR && !has_run_today("mispricing_model", con)) {
   )
 
   # ── Injury snapshot: ESPN + RotoWire merged ───────────────────────────────────
-  espn_raw  <- safe_run(fetch_all_injuries(), "ESPN injuries")
-  espn_named <- if (!is.null(espn_raw) && nrow(espn_raw) > 0) {
-    teams_map <- safe_run(fetch_espn_teams(), "ESPN team names")
-    if (!is.null(teams_map) && "team_id" %in% names(espn_raw))
-      left_join(espn_raw, teams_map, by = "team_id")
-    else espn_raw
-  } else NULL
+  # fetch_all_injuries() joins team_name internally now (injury_alert.R,
+  # 2026-07-09) — no separate fetch_espn_teams() call needed here anymore.
+  espn_named <- safe_run(fetch_all_injuries(), "ESPN injuries")
 
   rw_raw <- safe_run(fetch_rotowire_injuries(), "RotoWire injuries")
 

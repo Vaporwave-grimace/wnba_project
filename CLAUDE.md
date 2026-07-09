@@ -33,6 +33,17 @@ causes, bug fixes, historical context), see [`SESSION_ARCHIVE.md`](SESSION_ARCHI
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
+## Current State Note (2026-07-09, part 2 — silent-failure sweep)
+
+A health-check sweep (prompted by how bad the Pinnacle bug turned out to be) found the **same failure pattern — silently returns nothing, never crashes — in three more integrations**. All confirmed live and fixed same session:
+
+- **ESPN injury status was always "Active"** (`injury_alert.R`) — ESPN's roster API shape changed; the real per-player status now lives at `a$injuries[[1]]$status`, not `a$status` (which is a roster-membership flag, always `{name:"Active"}` for any rostered player). `injury_reports` had **0 rows, ever**. Fixed — confirmed live: 43 real injured players found immediately, including a full end-to-end test through `compute_injury_adjustment()` producing a real non-zero adjustment where it always returned zero before.
+- **RotoWire's injury page is JS-rendered — disabled, not fixed.** Investigated properly (fetched the real page via Firecrawl, inspected the raw HTML): it's a Webix virtualized data grid with a frozen player-name pane and a separately-indexed scrollable pane, nested link markup inside every cell, and virtualized rendering that may not even include every player in a single static snapshot. `rvest::html_table()` finding zero `<table>` elements was the whole bug. A robust fix needs a real headless browser driving scroll events — not attempted, given ESPN (now fixed) already provides comprehensive real data alone. `fetch_rotowire_injuries()` now returns empty immediately with a clear message instead of attempting a scrape that cannot succeed.
+- **Action Network's endpoint was 404 — fixed the endpoint, but the actual sharp-money signal remains unavailable.** The hardcoded `games?league=wnba&date=...&book=2` endpoint doesn't exist (confirmed 404 live). Found the real one (`scoreboard/wnba`) — it returns real games/odds, but every betting-split field (`*_public`/`*_money`) is null across every game and book_id tested. Root cause found in Action Network's own page data: their `__NEXT_DATA__` blob includes `"proUpsell": "Save Big on PRO!"` — split data is a paid PRO-tier feature, not available from any free/public endpoint. Rewired the endpoint + parsing to match the real response shape (so it stops 404ing and will start working immediately if Action Network PRO is ever purchased), but the secondary confirmation gate cannot actually contribute today. `an_confirms()` correctly returns `FALSE` — same behavior as before, now for an honest reason instead of a dead URL.
+- **Also found and fixed: a live, unfixed recurrence of a bug already "fixed" once in the same file.** `an_confirms()`'s side-matching had `filter(grepl(side, side, ...))` — a local variable `side` shadowed by dplyr's same-named data column inside `filter()`'s data mask, so both references resolved to the column and the check degenerated into "does each row match itself" (trivially true). Identical bug class to the team-matching fix already applied once (commit `1aa3db0`) — missed here. This was masked by the dead endpoint (never executed on real data); if someone had fixed the endpoint without this, Action Network would've started returning **wrong** confirmations instead of merely empty ones. Fixed together.
+- **Column-name mismatch surfaced while fixing ESPN:** `injury_reports`' DB schema uses a `team` column, but `mispricing.R`'s `compute_injury_adjustment()` requires a `team_name` column on its input. `fetch_all_injuries()` now outputs `team_name` (matching the model's requirement) and `save_new_injuries()` renames to `team` right at the DB-write boundary, rather than picking one name and breaking the other consumer. `run_pipeline.R`'s Step 4b also simplified — it previously did its own redundant `team_id`→`team_name` join that's now handled inside `fetch_all_injuries()` itself.
+- **Test coverage gap, not yet addressed:** `test_pipeline.R` would not have caught any of the above — its ESPN check only asserts HTTP 200 + roster count, never the parsed status value; it has no coverage at all for Action Network or RotoWire; and it still hardcodes `regions="us"` for its own Odds API smoke test, so it wouldn't even catch a regression of the Pinnacle bug fixed earlier today.
+
 ## Current State Note (2026-07-09)
 
 - **CRITICAL FIX — mispricing model never fired, ever, until today.** `mispricing.R` hardcodes `SHARP_BOOK <- "pinnacle"` for every totals/spreads comparison, but `fetch_wnba_odds()` fetched with `regions = "us"` only. Pinnacle is classified under the `eu` region by The Odds API and was **never** returned under `us` — confirmed live and against the DB: zero Pinnacle rows ever existed in `lines`, and `clv_log` had zero `trigger='mispricing'` rows since Step 4b was deployed (commit `b5eb4fd`, 2026-07-07). `compute_mispricing()` silently returned `NULL` on every single invocation. Fixed: `fetch_wnba_odds()` default is now `regions = "us,eu"` (`scripts/odds_ingest.R`). Cost impact: roughly doubles Odds API quota per call (confirmed 3→6 units for the 3-market fetch) — draws from the same 10-key pool shared with the MLB pipeline. No historical Pinnacle data exists to backfill; the mispricing model starts accumulating real data from today forward.
@@ -57,6 +68,36 @@ causes, bug fixes, historical context), see [`SESSION_ARCHIVE.md`](SESSION_ARCHI
 - **Error containment (2026-06-28)** — bare `dbGetQuery` calls for `opener_count`, `midday_count`, `already_closed`, `steam_today` wrapped in `tryCatch` with safe sentinel defaults. A locked DB skips the step rather than crashing the run.
 - **DB moved to local path (2026-06-28)** — `wnba_pipeline.sqlite` moved from Google Drive to `C:/Users/Mike/sports_data/`. All 10 scripts that defined `DB_PATH` updated. `open_wnba_db()` helper added to `db_setup.R`; `run_pipeline.R` and `wnba_settle.R` use it.
 - **PRAGMA foreign_keys (2026-06-28)** — `open_wnba_db()` now sets `PRAGMA foreign_keys = ON` on every connection. Was not set anywhere before.
+
+## Session Summary (2026-07-09, Session 10 — Silent-Failure Sweep: Injuries + Action Network)
+
+Prompted by how serious the Pinnacle bug turned out to be (Session 9, below) — hunted for the same failure class (silently returns nothing, never crashes) elsewhere in the pipeline. Found three more, all confirmed live and fixed same session.
+
+### `scripts/injury_alert.R` — ESPN injury status field was always "Active"
+
+- `a$status` is a roster-membership flag ESPN always sets to `{name:"Active"}` for any rostered player — the real per-player status lives at `a$injuries[[1]]$status`. `fetch_team_roster()`'s `p_status` logic now checks the injuries array first, falling back through the historical `a$status` shapes only when no injuries entry exists
+- `fetch_all_injuries()` now joins `team_name` internally (was previously left to the caller in `run_pipeline.R`) — required because `mispricing.R`'s `compute_injury_adjustment()` checks for a column literally named `team_name`
+- `save_new_injuries()` renames `team_name` → `team` right before `dbAppendTable()`, since the `injury_reports` DB schema (`db_setup.R`) uses `team` — two different consumers wanting two different names for the same data, reconciled at the DB-write boundary rather than picking one name globally
+- Verified end-to-end: 43 real injured players found (vs 0 before), `compute_injury_adjustment()` produces a real non-zero adjustment for a real game
+
+### `scripts/rotowire_injuries.R` — disabled, not fixed
+
+- RotoWire's injury page is a Webix virtualized data grid (confirmed via a Firecrawl JS-rendered fetch of the real page) — `html_table()` finding zero `<table>` elements was the whole bug, and a real fix needs a headless browser driving scroll events (virtualized rows may not all render in one static snapshot)
+- `fetch_rotowire_injuries()` now returns empty immediately with a clear disabled-message instead of attempting a scrape that structurally cannot succeed
+- Removed ~90 lines of now-unreachable scraping logic
+
+### `scripts/action_network.R` — dead endpoint fixed, PRO-tier paywall found and documented
+
+- `AN_API_BASE` endpoint changed from the 404ing `games?league=wnba&date=...&book=2` to the real `scoreboard/wnba` endpoint
+- Rewrote the parsing logic to match the real response shape (`games[].teams`/`games[].odds[]` with `*_public`/`*_money` fields per book)
+- Root-caused why splits are still empty: Action Network's own page data (`__NEXT_DATA__`) shows a `"proUpsell": "Save Big on PRO!"` banner — betting-split data is a paid tier feature, confirmed unavailable from any free endpoint tested
+- Fixed a live recurrence of an already-once-fixed bug: `an_confirms()`'s side-matching (`filter(grepl(side, side, ...))`) had the same local-variable-shadowed-by-column bug as the team-matching fix in commit `1aa3db0` — renamed to `target_side` to match that fix's pattern (`lw_home`/`lw_away` instead of `home`/`away`)
+
+### `scripts/run_pipeline.R`
+
+- Simplified Step 4b's injury snapshot block — removed the now-redundant `fetch_espn_teams()` + `team_id` join, since `fetch_all_injuries()` handles it internally now
+
+---
 
 ## Session Summary (2026-07-09, Session 9 — Pinnacle Region Bug + Steam Calibration)
 

@@ -32,95 +32,24 @@ ROTOWIRE_URL <- "https://www.rotowire.com/wnba/injury-report.php"
 #   player_name, team_name, status, injury_type, source, reported_at
 # Returns empty tibble on any error so callers can merge safely.
 
+# DISABLED 2026-07-09 — the injury table is no longer static HTML. It's a
+# Webix virtualized data grid (confirmed via a Firecrawl JS-rendered fetch):
+# a frozen player-name pane plus a separately-indexed scrollable pane for
+# team/pos/injury/status/est-return, nested <a>/<span> markup inside every
+# cell, and — critically — virtualized rendering means a single page
+# snapshot may not even contain every player without simulating scroll.
+# rvest's html_table() finds zero <table> elements and silently returns
+# empty, which is why this had returned nothing since deployment. A robust
+# fix needs a real headless browser driving actual scroll events, not a
+# scrape — not attempted here given ESPN (injury_alert.R, fixed same
+# session) now provides comprehensive real injury data on its own. Returns
+# empty immediately so callers merge safely via merge_injury_sources()
+# without wasting an HTTP round-trip on a scrape that cannot succeed.
 fetch_rotowire_injuries <- function() {
-  resp <- tryCatch(
-    request(ROTOWIRE_URL) |>
-      req_headers(
-        "User-Agent" = paste0("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ",
-                              "AppleWebKit/537.36 (KHTML, like Gecko) ",
-                              "Chrome/124.0.0.0 Safari/537.36"),
-        "Accept"     = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language" = "en-US,en;q=0.9"
-      ) |>
-      req_timeout(20) |>
-      req_retry(max_tries = 2, backoff = \(i) 3 * i) |>
-      req_perform(),
-    error = function(e) {
-      message("[rotowire] Request failed: ", e$message)
-      NULL
-    }
-  )
-
-  if (is.null(resp) || resp_status(resp) != 200L) {
-    message("[rotowire] HTTP ", if (!is.null(resp)) resp_status(resp) else "error",
-            " — skipping RotoWire injuries")
-    return(tibble())
-  }
-
-  page <- tryCatch(read_html(resp_body_string(resp)), error = \(e) NULL)
-  if (is.null(page)) return(tibble())
-
-  # RotoWire injury report uses a standard HTML table with class "rt-table" or similar.
-  # Try html_table() first; fall back to row/cell extraction if structure changed.
-  tables <- tryCatch(html_table(page, fill = TRUE), error = \(e) list())
-
-  inj_tbl <- NULL
-  for (t in tables) {
-    cols <- tolower(names(t))
-    if (any(grepl("player", cols)) && any(grepl("status|injury", cols))) {
-      inj_tbl <- t
-      break
-    }
-  }
-
-  if (is.null(inj_tbl) || nrow(inj_tbl) == 0) {
-    message("[rotowire] Injury table not found — page structure may have changed")
-    return(tibble())
-  }
-
-  # Normalize column names to standard snake_case
-  names(inj_tbl) <- tolower(trimws(names(inj_tbl))) |>
-    gsub("\\s+", "_", x = _) |>
-    gsub("[^a-z0-9_]", "", x = _)
-
-  # Column aliases — RotoWire has changed its column names a few times
-  col_map <- c(
-    player = "player_name", name = "player_name",
-    team   = "team_name",
-    pos    = "position",
-    injury = "injury_type", type = "injury_type",
-    status = "status",
-    updated = "updated_at", date = "updated_at"
-  )
-  for (old in names(col_map)) {
-    if (old %in% names(inj_tbl) && !col_map[[old]] %in% names(inj_tbl))
-      names(inj_tbl)[names(inj_tbl) == old] <- col_map[[old]]
-  }
-
-  required <- c("player_name", "status")
-  if (!all(required %in% names(inj_tbl))) {
-    message("[rotowire] Missing required columns after normalization: ",
-            paste(setdiff(required, names(inj_tbl)), collapse = ", "))
-    return(tibble())
-  }
-
-  now_str <- format(now("UTC"), "%Y-%m-%d %H:%M:%S")
-
-  result <- inj_tbl |>
-    as_tibble() |>
-    filter(!is.na(status), nchar(trimws(status)) > 0) |>
-    mutate(
-      status      = .normalize_status(status),
-      source      = "RotoWire",
-      reported_at = now_str
-    ) |>
-    filter(status %in% c("Out", "Doubtful", "Questionable", "GTD")) |>
-    select(any_of(c("player_name", "team_name", "position",
-                    "injury_type", "status", "updated_at",
-                    "source", "reported_at")))
-
-  message("[rotowire] ", nrow(result), " injury report(s) fetched")
-  result
+  message("[rotowire] Disabled — HTML table scraping cannot work against ",
+          "RotoWire's current virtualized grid UI. See comment above. ",
+          "Relying on ESPN alone.")
+  tibble()
 }
 
 # ── Merge helper ──────────────────────────────────────────────────────────────
