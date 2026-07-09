@@ -23,14 +23,21 @@ SPORT        <- "basketball_wnba"
 # Sharp books used for steam detection — these move first on syndicate action.
 # FanDuel/DraftKings excluded: recreational books that move LAST, not first.
 # In thin WNBA markets even 1 sharp book moving is meaningful signal.
-SHARP_BOOKS  <- c("pinnacle", "betonlineag", "bookmaker", "lowvig")
+# Note: "bookmaker" was removed 2026-07-09 — not a real Odds API bookmaker key
+# (confirmed against a live us+eu response), so it never matched anything.
+SHARP_BOOKS  <- c("pinnacle", "betonlineag", "lowvig")
 
 # Steam thresholds — calibrated for WNBA's thin market.
 # NFL/NBA defaults (1.0 pts, 3 books) are too tight here; meaningful WNBA steam
-# is often 0.5 pts across 2 books. Adjust up once we have flag history.
+# is often 0.5 pts across 2 books.
+#
+# STEAM_MIN_MOVE/STEAM_MIN_BOOKS below are fallback defaults only — the live
+# values are read from model_config ('steam_min_move'/'steam_min_books') via
+# .get_steam_thresholds(), auto-calibrated by calibrate_mispricing.R once
+# enough settled games accumulate. These constants matter only when con=NULL.
 STEAM_MIN_MOVE    <- 0.5    # minimum line movement in points to qualify
 STEAM_MIN_BOOKS   <- 2      # minimum number of books that must move together
-STEAM_WINDOW_MINS <- 60     # movement must occur within this many minutes
+STEAM_WINDOW_MINS <- 60     # movement must occur within this many minutes (NOT enforced — see detect_steam())
 
 # ── Credentials & Key Rotation ────────────────────────────────────────────────
 
@@ -112,8 +119,18 @@ odds_request <- function(path, params = list()) {
 
 # Pull current WNBA odds for spreads, totals, and h2h.
 # `snapshot_type`: one of "opener", "midday", "closing"
+#
+# regions = "us,eu" — NOT just "us". Pinnacle (SHARP_BOOK in mispricing.R,
+# and the first entry of SHARP_BOOKS below) is classified under the "eu"
+# region by The Odds API and is NEVER returned under "us" alone. Confirmed
+# live 2026-07-09: zero Pinnacle rows existed in `lines` since the mispricing
+# model was deployed (commit b5eb4fd) because every fetch used regions="us".
+# compute_mispricing() silently returned NULL every time as a result — the
+# whole Pinnacle-deviation gate has never fired once. Combining regions
+# roughly doubles Odds API quota cost per call (confirmed: 3 units for
+# markets=spreads,totals,h2h under "us" alone vs 6 under "us,eu").
 fetch_wnba_odds <- function(snapshot_type = "midday",
-                            regions       = "us",
+                            regions       = "us,eu",
                             markets       = "spreads,totals,h2h",
                             odds_format   = "american") {
   message("Fetching WNBA odds snapshot: ", snapshot_type)
@@ -211,18 +228,46 @@ save_snapshot <- function(odds_df, con) {
   message("Saved ", nrow(odds_df), " rows to lines table [", odds_df$snapshot_type[1], "].")
 }
 
+# Load calibrated steam thresholds from model_config; fall back to the module
+# defaults above when no con is available or model_config is empty/pre-migration.
+# Mirrors mispricing.R's .get_dev_threshold() pattern.
+.get_steam_thresholds <- function(con) {
+  if (is.null(con)) return(list(min_move = STEAM_MIN_MOVE, min_books = STEAM_MIN_BOOKS))
+  tryCatch({
+    cfg <- dbGetQuery(con, "SELECT param, value FROM model_config WHERE param IN ('steam_min_move','steam_min_books')")
+    list(
+      min_move  = cfg$value[cfg$param == "steam_min_move"][1]  %||% STEAM_MIN_MOVE,
+      min_books = cfg$value[cfg$param == "steam_min_books"][1] %||% STEAM_MIN_BOOKS
+    )
+  }, error = \(e) list(min_move = STEAM_MIN_MOVE, min_books = STEAM_MIN_BOOKS))
+}
+
 # ── Steam Detection ───────────────────────────────────────────────────────────
 
 # Compares two snapshots (earlier vs. later) and flags steam movements.
 #
-# Steam criteria (configurable at top of file):
-#   - Line moves >= STEAM_MIN_MOVE points
-#   - Across >= STEAM_MIN_BOOKS sharp books
-#   - Within STEAM_WINDOW_MINS minutes
+# Steam criteria:
+#   - Line moves >= min_move points        (calibrated via model_config 'steam_min_move';
+#   - Across >= min_books sharp books         falls back to STEAM_MIN_MOVE/STEAM_MIN_BOOKS
+#                                              module constants when con is NULL)
+#   - Within STEAM_WINDOW_MINS minutes     (NOT currently enforced — see note below)
+#
+# NOTE (2026-07-09): the window check below only logs a warning, it never
+# filters. Left as-is pending a decision on what STEAM_WINDOW_MINS should
+# actually mean — the real snapshot cadence is opener->midday fixed at ~120
+# min, but midday->closing varies widely (50-230+ min) with game tip time, so
+# a single fixed window doesn't obviously fit both. Do not assume enforcing
+# this at the current value (60) is safe without checking real gap data first
+# — it would silently zero out the opener->midday comparison, which is always
+# ~120 min apart.
 #
 # Returns a data frame of flagged movements (empty if none).
 detect_steam <- function(snap_early, snap_late, con = NULL) {
   if (nrow(snap_early) == 0 || nrow(snap_late) == 0) return(tibble())
+
+  thr       <- .get_steam_thresholds(con)
+  min_move  <- thr$min_move
+  min_books <- thr$min_books
 
   # Check time window
   t_early <- ymd_hms(snap_early$pulled_at[1], tz = "UTC")
@@ -247,7 +292,7 @@ detect_steam <- function(snap_early, snap_late, con = NULL) {
       by = c("game_id", "bookmaker", "market", "outcome_name")
     ) |>
     mutate(move = point_late - point) |>
-    filter(abs(move) >= STEAM_MIN_MOVE)
+    filter(abs(move) >= min_move)
 
   if (nrow(moves) == 0) return(tibble())
 
@@ -260,7 +305,7 @@ detect_steam <- function(snap_early, snap_late, con = NULL) {
       magnitude   = mean(abs(move)),
       .groups     = "drop"
     ) |>
-    filter(books_moved >= STEAM_MIN_BOOKS) |>
+    filter(books_moved >= min_books) |>
     mutate(detected_at = format(now("UTC"), "%Y-%m-%d %H:%M:%S"))
 
   if (nrow(steam_flags) == 0) return(tibble())

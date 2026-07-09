@@ -268,7 +268,9 @@ init_db <- function(path = DB_PATH) {
     list("dev_threshold",       1.5,   "initial seed — Pinnacle deviation gate (pts)"),
     list("injury_impact_out",   -3.0,  "initial seed — Out player scoring impact"),
     list("injury_impact_doubtful", -2.0, "initial seed"),
-    list("injury_impact_gtd",   -1.0,  "initial seed — GTD/Questionable impact")
+    list("injury_impact_gtd",   -1.0,  "initial seed — GTD/Questionable impact"),
+    list("steam_min_move",  0.5, "initial seed — matches STEAM_MIN_MOVE default in odds_ingest.R"),
+    list("steam_min_books", 2,   "initial seed — matches STEAM_MIN_BOOKS default in odds_ingest.R")
   )
   for (d in defaults) {
     dbExecute(con,

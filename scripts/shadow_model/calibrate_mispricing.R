@@ -225,6 +225,161 @@ auto_apply_dev_threshold <- function(con, sweep_results,
   invisible(TRUE)
 }
 
+# ── Steam threshold backtest + calibration (V1: totals only) ─────────────────
+#
+# Same rationale as the mispricing model's own totals-first scope: spreads
+# need the win-check to account for which team's outcome_name moved, which
+# isn't validated yet. Totals first; spreads once totals confirms the approach.
+#
+# Replays historical opener->midday and midday->closing line movements from
+# the raw `lines` table (not `steam_movements`, which only reflects whatever
+# threshold was live at capture time) at a given (min_move, min_books) grid
+# point, using SHARP_BOOKS only, then checks whether betting the confirmed
+# direction would have won against game_outcomes.actual_total.
+
+MAX_STEAM_MOVE_DELTA  <- 0.5   # max change in steam_min_move per calibration run
+MAX_STEAM_BOOKS_DELTA <- 1L    # max change in steam_min_books per calibration run
+
+#' Backtest steam accuracy at a given threshold for the totals market.
+#' Returns tibble: game_id, direction, point_at_alert, actual_total, won.
+backtest_steam <- function(con, min_move = 0.5, min_books = 2L) {
+  # outcome_name filter is required: totals carries both "Over" and "Under"
+  # rows sharing the same point value. Without filtering to one, the join
+  # below becomes many-to-many (2 early rows x 2 late rows per book) and
+  # silently double/quad-counts every movement. Mirrors detect_steam()'s own
+  # join keys in odds_ingest.R, which include outcome_name for this reason.
+  lines_df <- tryCatch(
+    dbGetQuery(con, "
+      SELECT game_id, snapshot_type, bookmaker, point
+      FROM lines
+      WHERE market = 'totals'
+        AND bookmaker IN ('pinnacle', 'betonlineag', 'lowvig')
+        AND outcome_name = 'Over'
+        AND point IS NOT NULL
+    ") |> as_tibble(),
+    error = \(e) tibble()
+  )
+  if (nrow(lines_df) == 0) return(tibble())
+
+  outcomes <- tryCatch(
+    dbGetQuery(con,
+      "SELECT game_id, actual_total FROM game_outcomes WHERE actual_total IS NOT NULL"
+    ) |> as_tibble(),
+    error = \(e) tibble()
+  )
+  if (nrow(outcomes) == 0) return(tibble())
+
+  # One comparison window: early snapshot vs. late snapshot, sharp books only.
+  eval_pair <- function(early_type, late_type) {
+    early <- lines_df |> filter(snapshot_type == early_type) |>
+      select(game_id, bookmaker, point_early = point)
+    late  <- lines_df |> filter(snapshot_type == late_type) |>
+      select(game_id, bookmaker, point_late = point)
+
+    moves <- inner_join(early, late, by = c("game_id", "bookmaker"),
+                        relationship = "one-to-one") |>
+      mutate(move = point_late - point_early) |>
+      filter(abs(move) >= min_move)
+
+    if (nrow(moves) == 0) return(tibble())
+
+    moves |>
+      mutate(direction = if_else(move > 0, "up", "down")) |>
+      group_by(game_id, direction) |>
+      summarise(books_moved = n(), point_at_alert = mean(point_late), .groups = "drop") |>
+      filter(books_moved >= min_books)
+  }
+
+  # opener->midday and midday->closing are independent signal opportunities
+  # (each would fire its own alert_steam_flags() call live) — don't dedupe
+  # across them, evaluate each on its own like the live system would.
+  signals <- bind_rows(
+    eval_pair("opener", "midday"),
+    eval_pair("midday", "closing")
+  )
+  if (nrow(signals) == 0) return(tibble())
+
+  signals |>
+    inner_join(outcomes, by = "game_id") |>
+    mutate(
+      won = case_when(
+        direction == "down" ~ actual_total < point_at_alert,
+        direction == "up"   ~ actual_total > point_at_alert,
+        TRUE                ~ NA
+      )
+    ) |>
+    filter(!is.na(won)) |>
+    select(game_id, direction, point_at_alert, actual_total, won)
+}
+
+#' Grid sweep over (min_move, min_books). Returns win rate/ROI per grid point
+#' with n >= min_n qualifying signals.
+sweep_steam_thresholds <- function(con,
+                                   move_grid  = seq(0.25, 1.5, by = 0.25),
+                                   books_grid = c(2L, 3L),
+                                   min_n      = 20L) {
+  grid <- expand.grid(min_move = move_grid, min_books = books_grid)
+  map_dfr(seq_len(nrow(grid)), function(i) {
+    mv <- grid$min_move[i]; bk <- grid$min_books[i]
+    bt <- tryCatch(backtest_steam(con, min_move = mv, min_books = bk), error = \(e) tibble())
+    if (nrow(bt) == 0 || nrow(bt) < min_n) return(tibble())
+
+    wr  <- mean(bt$won, na.rm = TRUE)
+    roi <- wr * (JUICE_DECIMAL - 1) - (1 - wr)
+    tibble(min_move = mv, min_books = bk, n = nrow(bt), win_rate = wr, roi = roi)
+  })
+}
+
+#' Apply optimal (min_move, min_books) if guardrails pass. Same guardrail
+#' philosophy as auto_apply_dev_threshold(): min_n, min_improvement, capped
+#' per-run delta on each param independently.
+auto_apply_steam_thresholds <- function(con, sweep_results,
+                                        current_move    = STEAM_MIN_MOVE,
+                                        current_books   = STEAM_MIN_BOOKS,
+                                        current_wr      = NULL,
+                                        min_n           = MIN_N_APPLY,
+                                        min_improvement = MIN_WR_IMPROVEMENT) {
+  if (is.null(sweep_results) || nrow(sweep_results) == 0) {
+    message("[calibrate] steam auto_apply: no sweep results")
+    return(invisible(FALSE))
+  }
+
+  best <- sweep_results |> filter(n >= min_n) |> arrange(desc(win_rate)) |> slice(1)
+  if (nrow(best) == 0) {
+    message(sprintf("[calibrate] steam auto_apply: no grid point has n >= %d", min_n))
+    return(invisible(FALSE))
+  }
+
+  opt_move  <- best$min_move[1]
+  opt_books <- best$min_books[1]
+  opt_wr    <- best$win_rate[1]
+  n_games   <- best$n[1]
+
+  if (!is.null(current_wr) && (opt_wr - current_wr) < min_improvement) {
+    message(sprintf(
+      "[calibrate] steam auto_apply: skip — optimal WR %.3f vs current %.3f (need +%.2f pp improvement)",
+      opt_wr, current_wr, min_improvement))
+    return(invisible(FALSE))
+  }
+
+  if (abs(opt_move - current_move) > MAX_STEAM_MOVE_DELTA) {
+    opt_move <- current_move + sign(opt_move - current_move) * MAX_STEAM_MOVE_DELTA
+    message(sprintf("[calibrate] steam auto_apply: capping min_move delta → %.2f", opt_move))
+  }
+  if (abs(opt_books - current_books) > MAX_STEAM_BOOKS_DELTA) {
+    opt_books <- current_books + sign(opt_books - current_books) * MAX_STEAM_BOOKS_DELTA
+    message(sprintf("[calibrate] steam auto_apply: capping min_books delta → %d", opt_books))
+  }
+
+  .set_config_param(con, "steam_min_move", opt_move, n_games = n_games,
+                    wr_before = current_wr, wr_after = opt_wr,
+                    notes = sprintf("auto-calibrated from backtest sweep, best WR=%.3f", opt_wr))
+  .set_config_param(con, "steam_min_books", opt_books, n_games = n_games,
+                    wr_before = current_wr, wr_after = opt_wr,
+                    notes = sprintf("auto-calibrated from backtest sweep, best WR=%.3f", opt_wr))
+  invisible(TRUE)
+}
+
 # ── Injury impact calibration ─────────────────────────────────────────────────
 
 # Evaluate whether injury-adjusted lines moved in the right direction vs actuals.
@@ -331,6 +486,47 @@ calibrate_mispricing_run <- function(con, creds = NULL, send_alert = FALSE) {
     message("[calibrate] No sweep results — insufficient data")
   }
 
+  # ── Steam thresholds (totals only, V1) ────────────────────────────────────
+  current_steam_move <- tryCatch(
+    dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'steam_min_move'")$value[1],
+    error = \(e) STEAM_MIN_MOVE
+  ) %||% STEAM_MIN_MOVE
+  current_steam_books <- tryCatch(
+    dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'steam_min_books'")$value[1],
+    error = \(e) STEAM_MIN_BOOKS
+  ) %||% STEAM_MIN_BOOKS
+
+  bt_steam_current <- tryCatch(
+    backtest_steam(con, min_move = current_steam_move, min_books = current_steam_books),
+    error = \(e) tibble()
+  )
+  current_steam_wr <- if (nrow(bt_steam_current) > 0) mean(bt_steam_current$won, na.rm = TRUE) else NULL
+
+  steam_sweep <- tryCatch(
+    sweep_steam_thresholds(con, min_n = 20L),
+    error = \(e) tibble()
+  )
+
+  steam_applied <- FALSE
+  if (nrow(steam_sweep) > 0) {
+    message("[calibrate] Steam threshold sweep results:")
+    walk(seq_len(nrow(steam_sweep)), function(i) {
+      message(sprintf("  move>=%.2f books>=%d  n=%d  WR=%.1f%%  ROI=%+.1f%%",
+                      steam_sweep$min_move[i], steam_sweep$min_books[i], steam_sweep$n[i],
+                      steam_sweep$win_rate[i] * 100, steam_sweep$roi[i] * 100))
+    })
+
+    steam_applied <- auto_apply_steam_thresholds(
+      con, steam_sweep,
+      current_move  = current_steam_move,
+      current_books = current_steam_books,
+      current_wr    = current_steam_wr
+    )
+  } else {
+    message("[calibrate] No steam sweep results — insufficient data ",
+            "(expected until Pinnacle data accumulates post-2026-07-09 region fix)")
+  }
+
   calibrate_injury_impact(con, min_n = 20L)
 
   if (send_alert && !is.null(creds)) {
@@ -340,7 +536,17 @@ calibrate_mispricing_run <- function(con, creds = NULL, send_alert = FALSE) {
       error = \(e) current_threshold
     ) %||% current_threshold
 
+    new_steam_move <- tryCatch(
+      dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'steam_min_move'")$value[1],
+      error = \(e) current_steam_move
+    ) %||% current_steam_move
+    new_steam_books <- tryCatch(
+      dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'steam_min_books'")$value[1],
+      error = \(e) current_steam_books
+    ) %||% current_steam_books
+
     n_total <- if (nrow(sweep) > 0) max(sweep$n, na.rm = TRUE) else 0L
+    n_steam_total <- if (nrow(steam_sweep) > 0) max(steam_sweep$n, na.rm = TRUE) else 0L
     msg <- paste0(
       "\U1F4CA *WNBA Mispricing Calibration*\n",
       sprintf("Threshold: %.2f pts %s\n", new_thr,
@@ -352,7 +558,19 @@ calibrate_mispricing_run <- function(con, creds = NULL, send_alert = FALSE) {
                 best_row$threshold[1], best_row$win_rate[1] * 100,
                 best_row$roi[1] * 100)
       } else "",
-      sprintf("N qualifying bets: %d", n_total)
+      sprintf("N qualifying bets: %d\n\n", n_total),
+      "\U0001F525 *Steam thresholds (totals V1)*\n",
+      sprintf("Move >= %.2f, Books >= %d  %s\n", new_steam_move, as.integer(new_steam_books),
+              if (steam_applied) sprintf("(updated from %.2f/%d)", current_steam_move, as.integer(current_steam_books))
+              else "(unchanged)"),
+      if (!is.null(current_steam_wr)) sprintf("Current steam-alone WR: %.1f%%\n", current_steam_wr * 100) else "",
+      if (nrow(steam_sweep) > 0) {
+        best_steam <- slice_max(steam_sweep, win_rate, n = 1)
+        sprintf("Best grid: move>=%.2f books>=%d → WR %.1f%% / ROI %+.1f%%\n",
+                best_steam$min_move[1], best_steam$min_books[1],
+                best_steam$win_rate[1] * 100, best_steam$roi[1] * 100)
+      } else "",
+      sprintf("N qualifying signals: %d", n_steam_total)
     )
 
     tryCatch(
@@ -370,5 +588,8 @@ calibrate_mispricing_run <- function(con, creds = NULL, send_alert = FALSE) {
   }
 
   message("[calibrate] Mispricing calibration complete")
-  invisible(list(applied = applied, sweep = sweep))
+  invisible(list(
+    applied       = applied,       sweep       = sweep,
+    steam_applied = steam_applied, steam_sweep = steam_sweep
+  ))
 }
