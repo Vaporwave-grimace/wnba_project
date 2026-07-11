@@ -266,6 +266,7 @@ init_db <- function(path = DB_PATH) {
   # Seed default params if table was just created (INSERT OR IGNORE = idempotent)
   defaults <- list(
     list("dev_threshold",       1.5,   "initial seed — Pinnacle deviation gate (pts)"),
+    list("injury_adj_cap",      6.0,   "initial seed — per-side injury adj clamp (pts); prevents multi-player stacking from producing unrealistic total swings"),
     list("injury_impact_out",   -3.0,  "initial seed — Out player scoring impact"),
     list("injury_impact_doubtful", -2.0, "initial seed"),
     list("injury_impact_gtd",   -1.0,  "initial seed — GTD/Questionable impact"),

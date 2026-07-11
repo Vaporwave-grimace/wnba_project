@@ -177,8 +177,16 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
 
   confidence <- if (steam_confirmed || ev_pct >= 6) "HIGH" else "MEDIUM"
   edge_str   <- sprintf("%+.1f%%", ev_pct)
+  # Must convert to ET before taking the date — commence_time is UTC, and any
+  # game tipping off after 8 PM ET is already past midnight UTC. Taking as.Date()
+  # on the raw UTC timestamp silently rolls those games to "tomorrow", which
+  # creates a second, distinct game_date for the same real-world bet — and since
+  # open_bets' natural key includes game_date, that duplicate sails right past
+  # the (game_date, away_team, home_team, bet_side, pipeline) dedup index instead
+  # of being caught by it. Confirmed live 2026-07-10: Sky@Sparks (10:10 PM ET /
+  # 02:10 UTC next day) posted twice, once per date value.
   game_date  <- tryCatch(
-    as.character(as.Date(meta$commence_time[1])),
+    format(with_tz(ymd_hms(meta$commence_time[1], tz = "UTC"), "America/New_York"), "%Y-%m-%d"),
     error = function(e) as.character(Sys.Date())
   )
 
@@ -213,9 +221,10 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
         INSERT OR IGNORE INTO open_bets
           (sport, pipeline, game_date, away_team, home_team,
            bet_side, odds, fair_odds, model_prob, ev_pct,
-           game_time, status, fired_at, window, confidence, line_status)
+           game_time, status, fired_at, window, confidence, line_status,
+           stake, kelly_fraction)
         VALUES
-          ('WNBA','WNBA',?,?,?,?,?,?,?,?,?,'OPEN',datetime('now'),?,?,'CONFIRMED')
+          ('WNBA','WNBA',?,?,?,?,?,?,?,?,?,'OPEN',datetime('now'),?,?,'CONFIRMED',?,?)
       ", list(
         game_date, away_team, home_team,
         play,
@@ -224,7 +233,8 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
         if (!is.na(model_prob)) as.numeric(model_prob) else NA,
         if (!is.na(ev_pct))     as.numeric(ev_pct)     else NA,
         if (!is.na(game_time_et)) game_time_et          else NA,
-        window, confidence
+        window, confidence,
+        round(kelly * 100, 2), round(kelly, 4)
       ))
       message(sprintf("[bet_alerts/WNBA] -> open_bets: %s  %s @ %s", play, away_team, home_team))
     }

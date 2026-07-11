@@ -21,12 +21,32 @@ SHARP_BOOK            <- "pinnacle"
 SOFT_BOOKS            <- c("draftkings", "fanduel", "betmgm", "betonlineag")
 DEV_THRESHOLD_DEFAULT <- 1.5   # fallback when model_config not yet populated
 
+# Per-side injury adjustment cap (points). Real total-points markets rarely move
+# more than a few points for even a missing superstar — sharp books already price
+# in known, long-standing absences. Without a cap, compute_injury_adjustment()
+# sums -3/-2/-1 per "Out"/"Doubtful"/"Questionable" player with no diminishing
+# returns, so a thin roster (e.g. an expansion team, or several long-term-injured
+# players) stacks to unrealistic 15-20+ point swings, which then blows up the
+# modeled win probability into absurd (70-90%+) edges. Confirmed live 2026-07-10:
+# Sky@Sparks (-15 total_adj, 5 players) and Wings@Tempo (-21, 7 players) produced
+# +82%/+81% edges off adjustments no sharp book would ever apply in one swing.
+INJURY_ADJ_CAP_DEFAULT <- 6.0
+
 # Load calibrated DEV_THRESHOLD from model_config; fall back to default.
 .get_dev_threshold <- function(con) {
   tryCatch(
     dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'dev_threshold'")$value[1] %||%
       DEV_THRESHOLD_DEFAULT,
     error = \(e) DEV_THRESHOLD_DEFAULT
+  )
+}
+
+# Load calibrated per-side injury adjustment cap from model_config; fall back to default.
+.get_injury_adj_cap <- function(con) {
+  tryCatch(
+    dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'injury_adj_cap'")$value[1] %||%
+      INJURY_ADJ_CAP_DEFAULT,
+    error = \(e) INJURY_ADJ_CAP_DEFAULT
   )
 }
 
@@ -111,8 +131,9 @@ compute_injury_adjustment <- function(game_id, con, injuries_with_names = NULL,
 
   if (nrow(inj) == 0) return(zero)
 
-  home_adj <- sum(inj$impact[inj$is_home], na.rm = TRUE)
-  away_adj <- sum(inj$impact[inj$is_away], na.rm = TRUE)
+  cap      <- .get_injury_adj_cap(con)
+  home_adj <- max(-cap, min(cap, sum(inj$impact[inj$is_home], na.rm = TRUE)))
+  away_adj <- max(-cap, min(cap, sum(inj$impact[inj$is_away], na.rm = TRUE)))
 
   list(
     home_adj  = home_adj,
