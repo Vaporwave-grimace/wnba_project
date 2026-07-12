@@ -129,8 +129,13 @@ its index has higher blast radius than fixing this on the WNBA side. Two
 players' props in the same game with the same stat/side would otherwise
 collide on that index and silently drop one. Fix: `bet_side` = e.g.
 `"PTS_OVER_Sabrina Ionescu"` (`sprintf("%s_%s_%s", toupper(stat),
-toupper(side), player_name)`), parsed back out at settlement time. This
-disambiguates without touching the shared table's schema.
+toupper(side), player_name)`), parsed back out at settlement time by
+splitting on the first two `_` only — `strsplit(bet_side, "_",
+fixed=TRUE)` then `stat = parts[1]`, `side = parts[2]`,
+`player_name = paste(parts[-(1:2)], collapse="_")` — since player names
+contain spaces, not underscores, but the split must not assume that stays
+true forever. This disambiguates without touching the shared table's
+schema.
 
 ## Projection formula
 
@@ -180,8 +185,12 @@ Reused as-is, no new constants:
 ## Pipeline wiring & cadence
 
 New file: `scripts/shadow_model/player_props.R`
-- `sync_player_box_scores(con)` — incremental wehoop fetch
-- `compute_team_def_factors(con)` — daily refresh
+- `sync_player_box_scores(con)` — full-season wehoop pull, `INSERT OR
+  IGNORE` on `(game_id, player_name)`
+- `compute_team_def_factors(con)` — daily refresh; allowed stats grouped
+  by each row's `opponent` column, not `team` (a team's defense factor is
+  what opposing players scored against them, not what their own players
+  scored — easy to invert by accident)
 - `compute_prop_projection(player, stat, opponent, con)`
 - `fetch_player_prop_odds(con)` — per-event Odds API call (one request per
   game, per MLB's existing 1st-inning-market precedent — bulk endpoint
@@ -194,12 +203,22 @@ cycle — per-event calls cost more Odds API credits than the existing bulk
 game-lines call, and props move most on late injury/rotation news rather
 than needing continuous polling.
 
+**Quota risk:** this pool of 10 Odds API keys is shared with
+`mlb_NRFI_YRFI` (confirmed in that project's `CLAUDE.md`), which just had
+an 11-day silent dead-key outage this same month from insufficient
+headroom monitoring. Per-event prop calls (4 markets × N games × 2
+cadences/day) add real load to a pool already running close to the edge.
+Check actual remaining-request headroom across the shared pool before
+enabling this in production, not just at build time.
+
 ## Settlement
 
 Extend `scripts/wnba_settle.R`: actual stat line comes from
 `player_box_scores` (synced post-game) instead of `game_outcomes`. Grade
 Over/Under directly against the real box score row for `(game_id,
-player_name, stat)`.
+player_name, stat)`. `player_box_scores` has no `pra` column — PRA bets
+grade against `pts + reb + ast` computed from the same row at settlement
+time, same as the projection formula does at prediction time.
 
 **Timing dependency:** wehoop typically lags 15–30 min behind final
 whistle before a game's box score is queryable. Late West Coast tips can
