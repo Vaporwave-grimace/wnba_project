@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"/c/Program Files/R/R-4.6.0/bin/Rscript.exe\" --vanilla -e \"cat\\('R OK\\\\n'\\)\")",
+      "Bash(git check-ignore *)",
+      "Bash(C:/Users/Mike/.claude/plugins/cache/claude-plugins-official/superpowers/6.1.1/skills/subagent-driven-development/scripts/task-brief 'G:/My Drive/Scripting Projects/wnba_project/docs/superpowers/plans/2026-07-12-wnba-player-props-plan.md' 1)",
+      "Bash(mkdir -p .superpowers/sdd)",
+      "Bash(\"C:\\\\Program Files\\\\R\\\\R-4.6.0\\\\bin\\\\Rscript.exe\" --vanilla scripts/shadow_model/test_player_props.R)",
+      "Bash(git commit *)",
+      "Bash(C:/Users/Mike/.claude/plugins/cache/claude-plugins-official/superpowers/6.1.1/skills/subagent-driven-development/scripts/review-package 67651a4 4acc509)",
+      "Bash(C:/Users/Mike/.claude/plugins/cache/claude-plugins-official/superpowers/6.1.1/skills/subagent-driven-development/scripts/task-brief 'G:/My Drive/Scripting Projects/wnba_project/docs/superpowers/plans/2026-07-12-wnba-player-props-plan.md' 2)",
+      "PowerShell(ls \"G:\\\\My Drive\\\\Scripting Projects\\\\wnba_project\\\\.claude\\\\worktrees\\\\wnba-player-props\\\\scripts\\\\shadow_model\\\\\")",
+      "Bash(C:/Users/Mike/.claude/plugins/cache/claude-plugins-official/superpowers/6.1.1/skills/subagent-driven-development/scripts/review-package 4acc509 cbb52d0)",
+      "Bash(find / -iname \"*wehoop*\" -path \"*library*\" 2>/dev/null | head -50; find \"C:/\" -iname \"load_wnba_player_box*\" 2>/dev/null | head -20)",
+      "Read(//g//**)",
+      "Read(//c//**)",
+      "Bash(where Rscript)",
+      "Bash(Rscript --version)",
+      "Bash(Rscript -e 'suppressMessages\\(library\\(wehoop\\)\\); df <- wehoop::load_wnba_player_box\\(seasons=2025L\\); cols <- names\\(df\\); cat\\(grep\\(\"team|opponent|minutes\", cols, value=TRUE, ignore.case=TRUE\\), sep=\"\\\\n\"\\)')",
+      "PowerShell(cd \"G:/My Drive/Scripting Projects/wnba_project\"; Rscript -e \"suppressMessages\\(library\\(wehoop\\)\\); df <- wehoop::load_wnba_player_box\\(seasons=2025L\\); cat\\('class:', class\\(df$minutes\\), '\\\\n'\\); print\\(head\\(df$minutes, 20\\)\\); cat\\('any NA after as.numeric:', sum\\(is.na\\(suppressWarnings\\(as.numeric\\(df$minutes\\)\\)\\)\\), 'of', nrow\\(df\\), '\\\\n'\\)\" 2>&1 | Select-Object -Last 60)",
+      "PowerShell(cd \"G:/My Drive/Scripting Projects/wnba_project\"; Rscript -e \"suppressMessages\\(library\\(wehoop\\)\\); df <- wehoop::load_wnba_player_box\\(seasons=2025L\\); cat\\('nrow:', nrow\\(df\\), '\\\\n'\\); print\\(head\\(unique\\(df$team_display_name\\), 5\\)\\); print\\(head\\(unique\\(df$opponent_team_display_name\\), 5\\)\\); cat\\('any NA opponent:', sum\\(is.na\\(df$opponent_team_display_name\\)\\), '\\\\n'\\); cat\\('any NA game_id:', sum\\(is.na\\(df$game_id\\)\\), 'any NA player:', sum\\(is.na\\(df$athlete_display_name\\)\\), '\\\\n'\\)\" 2>&1 | Select-Object -Last 30)",
+      "PowerShell(Rscript \"C:\\\\Users\\\\Mike\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\g--My-Drive-Scripting-Projects-mlb-NRFI-YRFI\\\\56f8e0b5-07af-463e-8109-2d8735e41895\\\\scratchpad\\\\check_wehoop.R\" 2>&1)"
+    ]
+  }
+}

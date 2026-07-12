@@ -60,15 +60,22 @@ sync_player_box_scores <- function(con, season = as.integer(format(Sys.Date(), "
     dplyr::filter(!is.na(player_name), !is.na(game_id))
 
   n_written <- 0L
-  for (i in seq_len(nrow(rows))) {
-    r <- rows[i, ]
-    n_written <- n_written + dbExecute(con, "
-      INSERT OR IGNORE INTO player_box_scores
-        (game_id, game_date, player_name, team, opponent, min, pts, reb, ast)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ", list(r$game_id, r$game_date, r$player_name, r$team, r$opponent,
-            r$min, r$pts, r$reb, r$ast))
-  }
+  tryCatch({
+    dbBegin(con)
+    for (i in seq_len(nrow(rows))) {
+      r <- rows[i, ]
+      n_written <- n_written + dbExecute(con, "
+        INSERT OR IGNORE INTO player_box_scores
+          (game_id, game_date, player_name, team, opponent, min, pts, reb, ast)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ", list(r$game_id, r$game_date, r$player_name, r$team, r$opponent,
+              r$min, r$pts, r$reb, r$ast))
+    }
+    dbCommit(con)
+  }, error = function(e) {
+    dbRollback(con)
+    stop(e)
+  })
 
   message(sprintf("[player_props] player_box_scores: %d new row(s) inserted (of %d fetched)",
                   n_written, nrow(rows)))
