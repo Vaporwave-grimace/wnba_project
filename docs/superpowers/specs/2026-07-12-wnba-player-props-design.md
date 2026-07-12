@@ -25,16 +25,18 @@ research/backtest-only exercise.
 ## Architecture
 
 ```
-wehoop player box scores ─┐
-                           ├─→ player_box_scores (DB cache, incremental)
-Odds API per-event props ─┘         │
-        │                           ├─→ team_def_factors (opp allowed vs league avg)
-        ▼                           │
-player_prop_lines (DB)              ▼
-        │                  compute_prop_projection(player, stat)
-        └──────────┬───────────────┘
-                    ▼
-           detect_prop_edges()
+wehoop player box scores ──→ player_box_scores (DB cache)
+                                    │
+                                    ├─→ team_def_factors (opp allowed vs league avg)
+                                    │
+Odds API per-event props ──→ player_prop_lines (DB)
+                                    │
+        ┌───────────────────────────┴──────────────┐
+        ▼                                           ▼
+compute_prop_projection(player, stat)      book line for (player, stat)
+        └───────────────────┬──────────────────────┘
+                             ▼
+                     detect_prop_edges()
                     │
                     ▼
       emit_wnba_bet_alert() [extended with market="prop"]
@@ -53,9 +55,15 @@ rather than mirroring `shadow_model/train.R`'s tidymodels path.
 ## DB schema (new tables, `wnba_pipeline.sqlite`)
 
 ### `player_box_scores`
-Incremental cache of wehoop's season box scores — avoids refetching the
-whole season every pipeline run; only pulls games newer than
-`MAX(game_date)` already stored.
+Cache of wehoop's season box scores. `load_wnba_player_box()` always
+returns the full season regardless of date args — there's no incremental
+*fetch* to exploit, so this is not a `MAX(game_date)` watermark (that
+approach silently stops backfilling past any gap in wehoop's own data —
+the watermark advances past the hole and never revisits it). Instead:
+every run, pull the full season from wehoop, `INSERT OR IGNORE` against
+the `(game_id, player_name)` PK. Idempotent, no gap risk, no extra cost
+over the watermark approach since wehoop's call cost is the same either
+way.
 
 ```sql
 CREATE TABLE player_box_scores (
@@ -113,7 +121,16 @@ CREATE TABLE team_def_factors (
 )
 ```
 
-No schema change to `open_bets` — reuse as-is.
+No schema change to `open_bets` — reuse as-is. **`bet_side` must encode
+player identity.** `open_bets`' natural-key unique index is
+`(game_date, away_team, home_team, bet_side, pipeline)` — no player
+column, and it's a shared cross-sport table (`bet_router`), so migrating
+its index has higher blast radius than fixing this on the WNBA side. Two
+players' props in the same game with the same stat/side would otherwise
+collide on that index and silently drop one. Fix: `bet_side` = e.g.
+`"PTS_OVER_Sabrina Ionescu"` (`sprintf("%s_%s_%s", toupper(stat),
+toupper(side), player_name)`), parsed back out at settlement time. This
+disambiguates without touching the shared table's schema.
 
 ## Projection formula
 
@@ -126,6 +143,10 @@ baseline_mean, baseline_sd = mean/sd(player's last 10 games' stat s)
 
 def_factor = team_def_factors[o, s].factor, clamped [0.85, 1.15]
   factor = allowed_avg / league_avg
+  MIN_GAMES_FOR_DEF_FACTOR = 5 — below this many games played by the
+    opponent this season, factor = 1.0 passthrough (clamp alone doesn't
+    stop a 3-game sample from sitting structurally at the clamp boundary,
+    especially for expansion teams / early season)
 
 projected_mean = baseline_mean * def_factor
 
@@ -179,6 +200,16 @@ Extend `scripts/wnba_settle.R`: actual stat line comes from
 `player_box_scores` (synced post-game) instead of `game_outcomes`. Grade
 Over/Under directly against the real box score row for `(game_id,
 player_name, stat)`.
+
+**Timing dependency:** wehoop typically lags 15–30 min behind final
+whistle before a game's box score is queryable. Late West Coast tips can
+end after the pipeline's last run of the day, so that night's settlement
+pass may find no box score yet — not an error, just not-ready-yet. Prop
+settlement must be safely retriable: same-night run finds nothing → skip
+silently → next morning's existing settlement step (already runs daily,
+same as the totals/spreads settle) picks up any props still `status='OPEN'`
+with a game_date in the past and grades them then. No new scheduled task
+needed, just don't treat "no box score found yet" as a terminal failure.
 
 ## Explicitly deferred (out of scope for v1)
 
