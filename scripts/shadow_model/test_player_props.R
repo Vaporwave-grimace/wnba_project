@@ -61,6 +61,37 @@ check("init_db is safe to re-run (idempotent)", {
 dbDisconnect(con)
 file.remove(tmp_db)
 
+source(here("scripts", "shadow_model", "player_props.R"))
+
+# ── Task 2: sync_player_box_scores ────────────────────────────────────────────
+section("Task 2: sync_player_box_scores")
+
+tmp_db2 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db2)
+con2 <- open_wnba_db(tmp_db2)
+
+check("sync_player_box_scores writes real 2025 rows", {
+  n <- sync_player_box_scores(con2, season = 2025L)
+  stopifnot(n > 0)
+})
+check("player_box_scores has plausible row count for a season", {
+  n <- dbGetQuery(con2, "SELECT COUNT(*) AS n FROM player_box_scores")$n
+  stopifnot(n > 1000)   # WNBA season is ~300 team-games x ~10 rostered players
+})
+check("re-running sync is idempotent (no duplicate rows)", {
+  before <- dbGetQuery(con2, "SELECT COUNT(*) AS n FROM player_box_scores")$n
+  sync_player_box_scores(con2, season = 2025L)
+  after  <- dbGetQuery(con2, "SELECT COUNT(*) AS n FROM player_box_scores")$n
+  stopifnot(before == after)
+})
+check("min column is numeric, not character", {
+  row <- dbGetQuery(con2, "SELECT min FROM player_box_scores LIMIT 1")
+  stopifnot(is.numeric(row$min))
+})
+
+dbDisconnect(con2)
+file.remove(tmp_db2)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)
