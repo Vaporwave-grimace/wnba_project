@@ -195,7 +195,7 @@ compute_prop_projection <- function(player_name, stat, opponent, con,
   baseline_mean <- mean(window_vals, na.rm = TRUE)
   baseline_sd   <- sd(window_vals, na.rm = TRUE)
 
-  if (is.na(baseline_sd)) {
+  if (is.na(baseline_sd) || baseline_sd == 0) {
     message(sprintf("[player_props] Zero/NA SD for %s (%s) -- skipping (n=%d)",
                     player_name, stat, n_avail))
     return(NULL)

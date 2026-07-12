@@ -160,7 +160,11 @@ seed_player_games <- function(con, player, pts_vec) {
 }
 
 # 12 games so the 10-game rolling window actually trims the oldest 2.
-seed_player_games(con4, "Steady Scorer", c(10,10,10,10,10,10,10,10,10,10,10,10))
+# First two values (indices 1-2) are trimmed by the rolling window, so
+# they're irrelevant to the mean -- the remaining 10 (indices 3-12) sum to
+# 100 (8+12+9+11+10+13+7+10+12+8), mean = 10.0 exactly, but with real
+# variance so baseline_sd != 0 for pts.
+seed_player_games(con4, "Steady Scorer", c(10,10, 8,12,9,11,10,13,7,10,12,8))
 seed_player_games(con4, "One Gamer", c(20))
 dbExecute(con4, "
   INSERT INTO team_def_factors (team, stat, allowed_avg, league_avg, factor, season, updated_at)
@@ -181,6 +185,13 @@ check("PRA computed as summed pts+reb+ast, not summed averages", {
 })
 check("zero-SD guard skips single-game players", {
   p <- compute_prop_projection("One Gamer", "pts", "Rival Team", con4, season = 2026L)
+  stopifnot(is.null(p))
+})
+check("zero-SD guard skips constant-stat players on realistic non-NA data", {
+  # reb is hardcoded to 4 for every seeded game -- sd(reb) is a real,
+  # non-NA 0, not NA. This proves the restored `baseline_sd == 0` branch
+  # of the guard actually fires (not just the is.na() branch above).
+  p <- compute_prop_projection("Steady Scorer", "reb", "Rival Team", con4, season = 2026L)
   stopifnot(is.null(p))
 })
 check("unknown opponent falls back to def_factor 1.0", {
