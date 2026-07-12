@@ -81,3 +81,83 @@ sync_player_box_scores <- function(con, season = as.integer(format(Sys.Date(), "
                   n_written, nrow(rows)))
   invisible(n_written)
 }
+
+# ── Opponent defense factors ──────────────────────────────────────────────────
+
+# Refreshes team_def_factors from player_box_scores. Grouped by each row's
+# `opponent` column, NOT `team` -- a team's defense factor is what
+# opposing players scored AGAINST them, not what their own players scored.
+# ('opponent' reads ambiguous enough that a future edit could "fix" this
+# to `team` without realizing that inverts the whole factor -- see the
+# GROUP BY comment below.)
+compute_team_def_factors <- function(con, season = as.integer(format(Sys.Date(), "%Y"))) {
+  box <- dbGetQuery(con, "
+    SELECT game_id, opponent, pts, reb, ast
+    FROM player_box_scores
+    WHERE game_date >= ? AND game_date <= ?
+  ", list(paste0(season, "-01-01"), paste0(season, "-12-31")))
+
+  if (nrow(box) == 0) {
+    message("[player_props] No player_box_scores rows for season ", season)
+    return(invisible(0L))
+  }
+
+  box$pra <- box$pts + box$reb + box$ast
+
+  games_per_opp <- box |>
+    dplyr::distinct(opponent, game_id) |>
+    dplyr::count(opponent, name = "n_games")
+
+  # defense factor: stat opponents scored AGAINST this team.
+  agg <- box |>
+    dplyr::group_by(opponent) |>          # GROUP BY opponent, not team -- see header comment
+    dplyr::summarise(
+      pts_allowed = mean(pts, na.rm = TRUE),
+      reb_allowed = mean(reb, na.rm = TRUE),
+      ast_allowed = mean(ast, na.rm = TRUE),
+      pra_allowed = mean(pra, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    dplyr::left_join(games_per_opp, by = "opponent")
+
+  league_avg <- list(
+    pts = mean(box$pts, na.rm = TRUE),
+    reb = mean(box$reb, na.rm = TRUE),
+    ast = mean(box$ast, na.rm = TRUE),
+    pra = mean(box$pra, na.rm = TRUE)
+  )
+
+  n_written <- 0L
+  for (i in seq_len(nrow(agg))) {
+    row <- agg[i, ]
+    for (stat in c("pts", "reb", "ast", "pra")) {
+      allowed_avg <- row[[paste0(stat, "_allowed")]]
+      la          <- league_avg[[stat]]
+
+      factor <- if (row$n_games < MIN_GAMES_FOR_DEF_FACTOR ||
+                    is.na(allowed_avg) || is.na(la) || la == 0) {
+        1.0   # passthrough -- too few games to trust the sample
+      } else {
+        max(DEF_FACTOR_CLAMP[1], min(DEF_FACTOR_CLAMP[2], allowed_avg / la))
+      }
+
+      dbExecute(con, "
+        INSERT OR REPLACE INTO team_def_factors
+          (team, stat, allowed_avg, league_avg, factor, season, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ", list(row$opponent, stat, allowed_avg, la, factor, season))
+      n_written <- n_written + 1L
+    }
+  }
+
+  message(sprintf("[player_props] team_def_factors refreshed -- %d row(s) for season %d",
+                  n_written, season))
+  invisible(n_written)
+}
+
+.lookup_def_factor <- function(opponent, stat, con, season) {
+  row <- dbGetQuery(con, "
+    SELECT factor FROM team_def_factors WHERE team = ? AND stat = ? AND season = ?
+  ", list(opponent, stat, season))
+  if (nrow(row) == 0 || is.na(row$factor[1])) 1.0 else row$factor[1]
+}

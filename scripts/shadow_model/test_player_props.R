@@ -92,6 +92,55 @@ check("min column is numeric, not character", {
 dbDisconnect(con2)
 file.remove(tmp_db2)
 
+# ── Task 3: compute_team_def_factors ──────────────────────────────────────────
+section("Task 3: compute_team_def_factors")
+
+tmp_db3 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db3)
+con3 <- open_wnba_db(tmp_db3)
+
+# Seed synthetic box scores: "Strong Defense" allows very little (should
+# clamp to the floor), "Weak Defense" allows a lot (should clamp to the
+# ceiling), "New Team" has only 3 games (should passthrough to 1.0).
+seed_rows <- function(con, opponent, n_games, pts_allowed) {
+  for (g in seq_len(n_games)) {
+    dbExecute(con, "
+      INSERT INTO player_box_scores
+        (game_id, game_date, player_name, team, opponent, min, pts, reb, ast)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ", list(paste0("g", opponent, g), "2026-06-01", paste0("p", opponent, g),
+            "Some Team", opponent, 30, pts_allowed, 5, 3))
+  }
+}
+seed_rows(con3, "Strong Defense", 8, 5)    # allows very few points
+seed_rows(con3, "Weak Defense",   8, 40)   # allows a lot of points
+seed_rows(con3, "New Team",       3, 5)    # below MIN_GAMES_FOR_DEF_FACTOR
+
+check("compute_team_def_factors writes rows for all 3 synthetic teams", {
+  compute_team_def_factors(con3, season = 2026L)
+  n <- dbGetQuery(con3, "SELECT COUNT(DISTINCT team) AS n FROM team_def_factors")$n
+  stopifnot(n == 3)
+})
+check("Strong Defense clamps to the floor (0.85)", {
+  f <- dbGetQuery(con3, "SELECT factor FROM team_def_factors WHERE team = 'Strong Defense' AND stat = 'pts'")$factor
+  stopifnot(abs(f - 0.85) < 1e-9)
+})
+check("Weak Defense clamps to the ceiling (1.15)", {
+  f <- dbGetQuery(con3, "SELECT factor FROM team_def_factors WHERE team = 'Weak Defense' AND stat = 'pts'")$factor
+  stopifnot(abs(f - 1.15) < 1e-9)
+})
+check("New Team (< MIN_GAMES_FOR_DEF_FACTOR) passes through at 1.0", {
+  f <- dbGetQuery(con3, "SELECT factor FROM team_def_factors WHERE team = 'New Team' AND stat = 'pts'")$factor
+  stopifnot(abs(f - 1.0) < 1e-9)
+})
+check("pra stat is written too", {
+  n <- dbGetQuery(con3, "SELECT COUNT(*) AS n FROM team_def_factors WHERE stat = 'pra'")$n
+  stopifnot(n == 3)
+})
+
+dbDisconnect(con3)
+file.remove(tmp_db3)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)
