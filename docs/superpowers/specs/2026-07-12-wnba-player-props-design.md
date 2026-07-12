@@ -128,14 +128,13 @@ column, and it's a shared cross-sport table (`bet_router`), so migrating
 its index has higher blast radius than fixing this on the WNBA side. Two
 players' props in the same game with the same stat/side would otherwise
 collide on that index and silently drop one. Fix: `bet_side` = e.g.
-`"PTS_OVER_Sabrina Ionescu"` (`sprintf("%s_%s_%s", toupper(stat),
-toupper(side), player_name)`), parsed back out at settlement time by
-splitting on the first two `_` only — `strsplit(bet_side, "_",
-fixed=TRUE)` then `stat = parts[1]`, `side = parts[2]`,
-`player_name = paste(parts[-(1:2)], collapse="_")` — since player names
-contain spaces, not underscores, but the split must not assume that stays
-true forever. This disambiguates without touching the shared table's
-schema.
+`"PTS|OVER|Sabrina Ionescu"` (`sprintf("%s|%s|%s", toupper(stat),
+toupper(side), player_name)`) — `|` as delimiter, not `_`, since it can't
+appear in a player name at all (unlike `_`, which is merely unlikely).
+Parsed back out at settlement time with a plain
+`strsplit(bet_side, "|", fixed=TRUE)[[1]]` → `stat/side/player_name` by
+position, no reassembly logic needed. This disambiguates without touching
+the shared table's schema.
 
 ## Projection formula
 
@@ -190,7 +189,11 @@ New file: `scripts/shadow_model/player_props.R`
 - `compute_team_def_factors(con)` — daily refresh; allowed stats grouped
   by each row's `opponent` column, not `team` (a team's defense factor is
   what opposing players scored against them, not what their own players
-  scored — easy to invert by accident)
+  scored — easy to invert by accident). The `GROUP BY opponent` line in
+  the actual implementation must carry an inline comment stating this
+  explicitly (e.g. `# defense factor: stat opponents scored AGAINST this
+  team`) — `opponent` reads ambiguously enough that a future edit could
+  "fix" it to `team` without realizing that inverts the whole factor.
 - `compute_prop_projection(player, stat, opponent, con)`
 - `fetch_player_prop_odds(con)` — per-event Odds API call (one request per
   game, per MLB's existing 1st-inning-market precedent — bulk endpoint
@@ -203,13 +206,27 @@ cycle — per-event calls cost more Odds API credits than the existing bulk
 game-lines call, and props move most on late injury/rotation news rather
 than needing continuous polling.
 
-**Quota risk:** this pool of 10 Odds API keys is shared with
-`mlb_NRFI_YRFI` (confirmed in that project's `CLAUDE.md`), which just had
-an 11-day silent dead-key outage this same month from insufficient
-headroom monitoring. Per-event prop calls (4 markets × N games × 2
-cadences/day) add real load to a pool already running close to the edge.
-Check actual remaining-request headroom across the shared pool before
-enabling this in production, not just at build time.
+**Quota risk — hard gate, not a build-time check.** This pool of 10 Odds
+API keys is shared with `mlb_NRFI_YRFI` (confirmed in that project's
+`CLAUDE.md`), which just had an 11-day silent dead-key outage this same
+month from insufficient headroom monitoring — discovering the pool is
+exhausted is worse than any gap in prop coverage. Per-event prop calls (4
+markets × N games × 2 cadences/day) add real, recurring load on top of
+what MLB already draws.
+
+**Do not enable live prop fetching until:**
+- Every prop-fetching call logs `x-requests-remaining` (the header Odds
+  API already returns) per key, per run — not a one-time manual check.
+- An alert fires (same Telegram/Discord channel as the existing MLB
+  dead-key alert) when any key's remaining count drops below a defined
+  floor (e.g. 500) — mirroring the dead-key detection pattern
+  `mlb_NRFI_YRFI/scripts/engine.R` already has for 401/403s, extended to
+  cover "still alive but running low," which that existing check doesn't
+  catch.
+
+This is a prerequisite for turning alerts on, not a nice-to-have —
+build and dry-run everything else first, but the live-fire gate stays
+closed until this logging/alerting exists.
 
 ## Settlement
 
