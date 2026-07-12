@@ -161,3 +161,56 @@ compute_team_def_factors <- function(con, season = as.integer(format(Sys.Date(),
   ", list(opponent, stat, season))
   if (nrow(row) == 0 || is.na(row$factor[1])) 1.0 else row$factor[1]
 }
+
+# ── Projection ─────────────────────────────────────────────────────────────────
+
+# stat in {"pts","reb","ast","pra"}. Returns NULL if the player has fewer
+# than 2 games logged (baseline_sd would be 0/NA -- see the zero-SD guard
+# below; a degenerate SD feeding pnorm() is the same failure class as the
+# injury_adj_cap incidents documented in CLAUDE.md).
+compute_prop_projection <- function(player_name, stat, opponent, con,
+                                    season = as.integer(format(Sys.Date(), "%Y"))) {
+  stat <- tolower(stat)
+  if (!stat %in% names(STAT_MARKET_MAP)) {
+    stop("compute_prop_projection: stat must be one of pts/reb/ast/pra, got: ", stat)
+  }
+
+  games <- dbGetQuery(con, "
+    SELECT game_date, pts, reb, ast
+    FROM player_box_scores
+    WHERE player_name = ?
+    ORDER BY game_date DESC
+  ", list(player_name))
+
+  if (nrow(games) == 0) {
+    message("[player_props] No game log for player: ", player_name)
+    return(NULL)
+  }
+
+  stat_vals <- if (stat == "pra") games$pts + games$reb + games$ast else games[[stat]]
+
+  n_avail     <- min(ROLLING_WINDOW_GAMES, length(stat_vals))
+  window_vals <- stat_vals[seq_len(n_avail)]   # already DESC-ordered = most recent first
+
+  baseline_mean <- mean(window_vals, na.rm = TRUE)
+  baseline_sd   <- sd(window_vals, na.rm = TRUE)
+
+  if (is.na(baseline_sd)) {
+    message(sprintf("[player_props] Zero/NA SD for %s (%s) -- skipping (n=%d)",
+                    player_name, stat, n_avail))
+    return(NULL)
+  }
+
+  def_factor <- .lookup_def_factor(opponent, stat, con, season)
+
+  list(
+    player_name    = player_name,
+    stat           = stat,
+    opponent       = opponent,
+    n_games        = n_avail,
+    baseline_mean  = baseline_mean,
+    baseline_sd    = baseline_sd,
+    def_factor     = def_factor,
+    projected_mean = baseline_mean * def_factor
+  )
+}

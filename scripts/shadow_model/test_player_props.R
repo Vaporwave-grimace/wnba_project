@@ -141,6 +141,57 @@ check("pra stat is written too", {
 dbDisconnect(con3)
 file.remove(tmp_db3)
 
+# ── Task 4: compute_prop_projection ───────────────────────────────────────────
+section("Task 4: compute_prop_projection")
+
+tmp_db4 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db4)
+con4 <- open_wnba_db(tmp_db4)
+
+seed_player_games <- function(con, player, pts_vec) {
+  for (i in seq_along(pts_vec)) {
+    dbExecute(con, "
+      INSERT INTO player_box_scores
+        (game_id, game_date, player_name, team, opponent, min, pts, reb, ast)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ", list(paste0("g", i), sprintf("2026-06-%02d", i), player,
+            "Some Team", "Rival Team", 30, pts_vec[i], 4, 3))
+  }
+}
+
+# 12 games so the 10-game rolling window actually trims the oldest 2.
+seed_player_games(con4, "Steady Scorer", c(10,10,10,10,10,10,10,10,10,10,10,10))
+seed_player_games(con4, "One Gamer", c(20))
+dbExecute(con4, "
+  INSERT INTO team_def_factors (team, stat, allowed_avg, league_avg, factor, season, updated_at)
+  VALUES ('Rival Team', 'pts', 22, 20, 1.1, 2026, datetime('now'))
+")
+
+check("projection uses last 10 games, applies def factor", {
+  p <- compute_prop_projection("Steady Scorer", "pts", "Rival Team", con4, season = 2026L)
+  stopifnot(!is.null(p))
+  stopifnot(p$n_games == 10)
+  stopifnot(abs(p$baseline_mean - 10) < 1e-9)
+  stopifnot(abs(p$projected_mean - 11) < 1e-9)   # 10 * 1.1
+})
+check("PRA computed as summed pts+reb+ast, not summed averages", {
+  p <- compute_prop_projection("Steady Scorer", "pra", "Rival Team", con4, season = 2026L)
+  stopifnot(!is.null(p))
+  stopifnot(abs(p$baseline_mean - (10 + 4 + 3)) < 1e-9)
+})
+check("zero-SD guard skips single-game players", {
+  p <- compute_prop_projection("One Gamer", "pts", "Rival Team", con4, season = 2026L)
+  stopifnot(is.null(p))
+})
+check("unknown opponent falls back to def_factor 1.0", {
+  p <- compute_prop_projection("Steady Scorer", "pts", "Nonexistent Team", con4, season = 2026L)
+  stopifnot(!is.null(p))
+  stopifnot(abs(p$def_factor - 1.0) < 1e-9)
+})
+
+dbDisconnect(con4)
+file.remove(tmp_db4)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)
