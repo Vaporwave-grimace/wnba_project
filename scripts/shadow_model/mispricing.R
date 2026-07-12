@@ -135,10 +135,18 @@ compute_injury_adjustment <- function(game_id, con, injuries_with_names = NULL,
   home_adj <- max(-cap, min(cap, sum(inj$impact[inj$is_home], na.rm = TRUE)))
   away_adj <- max(-cap, min(cap, sum(inj$impact[inj$is_away], na.rm = TRUE)))
 
+  # Per-side cap alone still lets both sides saturate independently (up to
+  # 2x cap combined) whenever both teams have several "Out" players in the
+  # same game — confirmed live 2026-07-11 (Mercury@Aces, -12 combined off
+  # two independently-capped -6 sides) after the per-side cap above was
+  # added specifically to fix the single-side version of this same bug
+  # (2026-07-10, Sky@Sparks/Wings@Tempo). Clamp the combined total too.
+  total_adj <- max(-cap, min(cap, home_adj + away_adj))
+
   list(
     home_adj  = home_adj,
     away_adj  = away_adj,
-    total_adj = home_adj + away_adj,
+    total_adj = total_adj,
     n_injured = nrow(inj),
     detail    = paste0(inj$player_name, " (", inj$status, ")")
   )

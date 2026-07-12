@@ -22,6 +22,23 @@ MIN_EV_PCT <- 3.0
 .WNBA_TOTAL_SD  <- 8.0
 .WNBA_SPREAD_SD <- 5.0
 
+# Sanity backstop on model_prob — a totals/spread pnorm approximation should
+# never legitimately exceed this. Without it, an upstream input bug (e.g. an
+# uncapped or under-capped line adjustment) mechanically produces 90%+
+# "confidence" and blows Kelly sizing out to 40%+ of bankroll on a single
+# bet. Confirmed live 2026-07-10/07-11 (Sky@Sparks, Wings@Tempo, Mercury@Aces
+# — 73-82% edges off adjustments no sharp book would ever apply). This caps
+# the symptom regardless of whether the upstream adjustment/sd inputs are
+# still wrong.
+MODEL_PROB_CEILING <- 0.80
+
+# Hard ceiling on stake as a fraction of bankroll, mirroring MLB/PGA's
+# KELLY_MAX_UNITS pattern (no single bet should ever risk this much,
+# regardless of how confident the model claims to be). MLB/PGA cap in
+# "units" against a Quarter-Kelly base; WNBA sizes stake as a raw
+# fraction of bankroll, so the equivalent guardrail is a fraction cap.
+KELLY_STAKE_CEILING <- 0.10
+
 # Discord channel: #auto-bet-broadcast
 .BROADCAST_CHANNEL <- "1499488823598387412"
 
@@ -135,6 +152,8 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
       pnorm(point,  mean = model_line, sd = sd, lower.tail = TRUE)
   }
 
+  model_prob <- min(model_prob, MODEL_PROB_CEILING)
+
   if (is.na(bo$odds)) {
     message(sprintf("[bet_alerts/WNBA] No odds found for %s %s %s",
                     game_id, market, side))
@@ -146,7 +165,7 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
   implied_prob  <- .american_to_prob(bo$odds)
   ev_pct        <- (model_prob - implied_prob) / implied_prob * 100
   fair_odds     <- .prob_to_american(model_prob)
-  kelly         <- .kelly_fraction(model_prob, bo$odds)
+  kelly         <- min(.kelly_fraction(model_prob, bo$odds), KELLY_STAKE_CEILING)
 
   if (is.na(ev_pct) || ev_pct < MIN_EV_PCT) {
     message(sprintf("[bet_alerts/WNBA] %s %s %s — EV=%.1f%% below threshold (%.1f%%)",

@@ -33,6 +33,19 @@ causes, bug fixes, historical context), see [`SESSION_ARCHIVE.md`](SESSION_ARCHI
 - [x] Shadow model trained and logging
 - [x] Scheduled tasks registered (setup_schedule.ps1)
 
+## Current State Note (2026-07-11 — injury_adj_cap re-break: combined total was never capped)
+
+Triggered by a live Discord alert (Phoenix Mercury @ Las Vegas Aces, Under 168.5, +73.8% edge, 42.8% Kelly stake) caught by the user directly comparing a fired alert against the actual broadcast — same failure class as 2026-07-10 below, recurring one day after that fix shipped.
+
+- **Root cause: the 2026-07-10 `injury_adj_cap` fix clamped each side independently, never the combined total.** Aces (home) had 5 players "Out" (incl. A'ja Wilson), Mercury (away) had 4 — raw adjustments -15 and -12, each correctly clamped to the ±6 per-side cap, but `total_adj = home_adj + away_adj` was returned uncapped, so two independently-legal ±6 sides still summed to a combined -12 swing. Confirmed via `clv_log`: identical `model_prob = 0.9331928` fired for an unrelated game (Wings@Tempo) the day before — mechanical fingerprint of the same ±12 combined output, not a one-off.
+- **Fixed in `mispricing.R`'s `compute_injury_adjustment()`:** `total_adj` is now itself clamped to `[-cap, +cap]` after summing the two capped sides, so the combined swing can never exceed the same ±6 pts the per-side cap was supposed to guarantee.
+- **Added two independent backstops in `bet_alerts.R`**, since the root cause has now recurred once already and `.WNBA_TOTAL_SD <- 8.0` remains an uncalibrated placeholder (unresolved from 2026-07-10, below):
+  - `MODEL_PROB_CEILING <- 0.80` — hard ceiling on `model_prob` regardless of upstream inputs.
+  - `KELLY_STAKE_CEILING <- 0.10` — hard ceiling on stake as a fraction of bankroll, mirroring MLB/PGA's `KELLY_MAX_UNITS` pattern (WNBA sizes as a raw bankroll fraction rather than units, so the equivalent guardrail is a fraction cap).
+  - Verified against the actual bad bet: 93.3%/42.8% → 77.3%/25.5% (combined-cap fix alone) → 77.3%/**10%** (after the stake ceiling). The prob ceiling didn't even need to bite here since 77.3% is already under 80% — it's there for the next input bug, not this one.
+- **Not fixed, same caveat as 2026-07-10:** `.WNBA_TOTAL_SD`/`.WNBA_SPREAD_SD` are still hardcoded, uncalibrated guesses. The new ceilings are a backstop against the symptom, not a fix for the underlying uncalibrated variance — still needs a real backtest pass once enough 2026 settled totals exist.
+- **Separately flagged, not fixed:** `open_bets.discord_msg_id` and `.game_id` are `NULL` on WNBA (and MLB) rows written via `bet_router`'s Discord ingestion path — there's no way to programmatically edit/strike-through a fired alert's original Discord message once its game starts, and no clean join back to the pipeline's own game record for a proper start-time cutoff. Bets also never transition out of `status='OPEN'` once the game starts, so a stale alert looks identical to a live one when reviewed hours later. Worth a fix in `bet_router`, not this project.
+
 ## Current State Note (2026-07-10 — unbounded injury adjustment + UTC/ET game_date dedup bug)
 
 Prompted by a live "WNBA POSTED BETS" digest showing two totals picks (Sky@Sparks, Wings@Tempo) at implausible **+82%/+81%** edges — real edges in this pipeline normally run 5-15%.
