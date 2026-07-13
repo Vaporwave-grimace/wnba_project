@@ -558,7 +558,6 @@ ODDS_API_QUOTA_FLOOR <- 500L
 
 check_quota_headroom <- function(con, creds, channel_id, floor = ODDS_API_QUOTA_FLOOR) {
   status <- key_state$status()
-  today  <- format(Sys.Date(), "%Y-%m-%d")
 
   for (i in seq_len(nrow(status))) {
     row <- status[i, ]
@@ -572,8 +571,8 @@ check_quota_headroom <- function(con, creds, channel_id, floor = ODDS_API_QUOTA_
     if (row$remaining < floor) {
       already_alerted <- dbGetQuery(con, "
         SELECT COUNT(*) AS n FROM odds_api_quota_log
-        WHERE key_index = ? AND DATE(checked_at) = ? AND alerted = 1
-      ", list(row$index, today))$n > 0
+        WHERE key_index = ? AND DATE(checked_at) = DATE('now') AND alerted = 1
+      ", list(row$index))$n > 0
 
       if (!already_alerted) {
         msg <- sprintf(

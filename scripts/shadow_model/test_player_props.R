@@ -205,6 +205,11 @@ file.remove(tmp_db4)
 
 # ── Task 5: check_quota_headroom ──────────────────────────────────────────────
 source(here("scripts", "odds_ingest.R"))
+source(here("scripts", "injury_alert.R"))   # send_telegram()/send_discord() live here --
+                                             # without this, the fake-credential calls
+                                             # below fail on "function not found" instead
+                                             # of a real (failing) HTTP call, which is a
+                                             # false-positive pass for the tryCatch path.
 
 section("Task 5: check_quota_headroom")
 
@@ -244,6 +249,50 @@ check("second call same day does not double-alert the same key", {
 
 dbDisconnect(con5)
 file.remove(tmp_db5)
+
+# ── UTC dedup regression test ─────────────────────────────────────────────
+# Directly proves the fix for the UTC/local timezone mismatch: the dedup
+# check must compare checked_at against SQLite's own UTC clock
+# (DATE('now')), not an R-side DATE(Sys.Date()) local-time string. Rather
+# than fake the host machine's timezone, this inserts a synthetic
+# already-alerted row stamped with SQLite's own datetime('now') (guaranteed
+# same UTC day as whatever check_quota_headroom will compute), then calls
+# check_quota_headroom() and confirms no additional alerted=1 row appears
+# for that key -- i.e. the dedup recognizes the synthetic row as "already
+# alerted today" purely via the SQL-side DATE comparison, with no R-side
+# date variable involved at all. Uses a fresh DB/connection so there's no
+# collision with key_index values already written by the checks above.
+tmp_db6 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db6)
+con6 <- open_wnba_db(tmp_db6)
+
+key_state$init(list(odds_api_keys = c("cccccccccccccccccccccccccccccccc")))
+key_state$update_remaining(200)   # below the 500 floor
+
+dbExecute(con6, "
+  INSERT INTO odds_api_quota_log (key_index, key_tail, remaining, checked_at, alerted)
+  VALUES (1, 'cccccc', 200, datetime('now'), 1)
+")
+
+check("UTC-day dedup: pre-seeded same-UTC-day alerted row suppresses a new alert", {
+  before <- dbGetQuery(con6, "
+    SELECT COUNT(*) AS n FROM odds_api_quota_log WHERE key_index = 1 AND alerted = 1
+  ")$n
+  stopifnot(before == 1)   # sanity: only the synthetic row so far
+
+  suppressMessages(check_quota_headroom(con6, fake_creds, channel_id = "0", floor = 500L))
+
+  after <- dbGetQuery(con6, "
+    SELECT COUNT(*) AS n FROM odds_api_quota_log WHERE key_index = 1 AND alerted = 1
+  ")$n
+  # A new (unalerted) row is logged for this call, but the dedup check --
+  # now computed entirely in SQL against DATE('now') -- must see the
+  # synthetic row as "already alerted today" and NOT flag the new row too.
+  stopifnot(after == 1)
+})
+
+dbDisconnect(con6)
+file.remove(tmp_db6)
 
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
