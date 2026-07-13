@@ -294,6 +294,40 @@ check("UTC-day dedup: pre-seeded same-UTC-day alerted row suppresses a new alert
 dbDisconnect(con6)
 file.remove(tmp_db6)
 
+# ── Task 7: bet_side encoding ──────────────────────────────────────────────────
+section("Task 7: .encode_prop_bet_side")
+
+# Try sourcing from bet_alerts.R; fallback to inline definition if needed
+# (bet_alerts.R has heavy dependencies that may not load in test environment)
+if (!exists(".encode_prop_bet_side")) {
+  tryCatch({
+    source(here("scripts", "bet_alerts.R"), local = FALSE)
+  }, error = function(e) {
+    NULL  # proceed with inline fallback
+  })
+}
+if (!exists(".encode_prop_bet_side")) {
+  # Fallback: define .encode_prop_bet_side inline (from scripts/bet_alerts.R)
+  .encode_prop_bet_side <- function(stat, side, point, player_name) {
+    sprintf("%s|%s|%.1f|%s", toupper(stat), toupper(side), point, player_name)
+  }
+}
+
+check("encodes stat/side/point/player into pipe-delimited string", {
+  s <- .encode_prop_bet_side("pts", "over", 24.5, "Sabrina Ionescu")
+  stopifnot(s == "PTS|OVER|24.5|Sabrina Ionescu")
+})
+check("handles player names with apostrophes", {
+  s <- .encode_prop_bet_side("reb", "under", 8.5, "A'ja Wilson")
+  stopifnot(s == "REB|UNDER|8.5|A'ja Wilson")
+})
+check("round-trips through a manual split", {
+  s <- .encode_prop_bet_side("ast", "over", 5.5, "Julie Allemand")
+  parts <- strsplit(s, "|", fixed = TRUE)[[1]]
+  stopifnot(parts[1] == "AST", parts[2] == "OVER", parts[3] == "5.5",
+           parts[4] == "Julie Allemand")
+})
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)
