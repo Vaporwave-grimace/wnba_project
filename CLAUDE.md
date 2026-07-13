@@ -195,3 +195,10 @@ Steam Discord alerts were posting to `#auto-bet-broadcast` (the bet ingestion ch
 - **Step 3**: `already_closed <- dbGetQuery(...)` wrapped in `tryCatch(error = \(e) character(0))`
 - **Step 4**: `steam_today <- dbGetQuery(...)` wrapped in `tryCatch(error = \(e) tibble())`
 - UTC range fix: `commence_time >= ? AND < ?` replacing `DATE(commence_time, '-4 hours') = ?`
+
+---
+
+## Working Agreements
+
+- **Lessons log** — check `lessons.md` at session start for past in-repo mistakes. After any correction from the user (wrong approach, bad assumption, bug from missing context), append an entry there so it doesn't repeat. This is separate from cross-session auto-memory (facts/feedback about the user) — `lessons.md` is this repo's mistake log specifically.
+- **Elegance check** — before non-trivial changes, pause and ask "is there a more elegant way?" If a fix feels hacky, ask "knowing everything now, what's the clean solution?" Don't over-engineer, but don't ship the hacky first draft either.
