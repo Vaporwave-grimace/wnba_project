@@ -558,7 +558,7 @@ ODDS_API_QUOTA_FLOOR <- 500L
 
 check_quota_headroom <- function(con, creds, channel_id, floor = ODDS_API_QUOTA_FLOOR) {
   status <- key_state$status()
-  today  <- format(lubridate::now("UTC"), "%Y-%m-%d")
+  today  <- format(Sys.Date(), "%Y-%m-%d")
 
   for (i in seq_len(nrow(status))) {
     row <- status[i, ]
