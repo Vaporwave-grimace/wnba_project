@@ -214,3 +214,82 @@ compute_prop_projection <- function(player_name, stat, opponent, con,
     projected_mean = baseline_mean * def_factor
   )
 }
+
+# ── Player prop odds fetch ────────────────────────────────────────────────────
+
+PROP_MARKETS <- "player_points,player_rebounds,player_assists,player_points_rebounds_assists"
+
+# One Odds API request per game (bulk endpoint doesn't support player
+# props, same constraint MLB's 1st-inning markets hit). `game_ids` is
+# supplied by the caller (run_pipeline.R already knows today's slate /
+# near-tip games) rather than re-derived here, to avoid duplicating that
+# lookup logic.
+fetch_player_prop_odds <- function(con, game_ids, snapshot_type = "midday") {
+  if (length(game_ids) == 0) {
+    message("[player_props] No game_ids supplied -- nothing to fetch.")
+    return(invisible(tibble::tibble()))
+  }
+
+  pulled_at <- format(lubridate::now("UTC"), "%Y-%m-%d %H:%M:%S")
+  all_rows  <- list()
+
+  for (gid in game_ids) {
+    resp <- tryCatch(
+      odds_request(
+        path   = paste0("sports/", SPORT, "/events/", gid, "/odds"),
+        params = list(regions = "us", markets = PROP_MARKETS, oddsFormat = "american")
+      ),
+      error = function(e) {
+        message("[player_props] Odds API error for ", gid, ": ", e$message)
+        NULL
+      }
+    )
+    if (is.null(resp)) next
+
+    game <- tryCatch(httr2::resp_body_json(resp, simplifyVector = FALSE), error = function(e) NULL)
+    if (is.null(game) || length(game$bookmakers) == 0) next
+
+    rows <- purrr::map_dfr(game$bookmakers, function(book) {
+      purrr::map_dfr(book$markets, function(mkt) {
+        purrr::map_dfr(mkt$outcomes, function(o) {
+          tibble::tibble(
+            game_id       = game$id,
+            snapshot_type = snapshot_type,
+            sport_key     = game$sport_key %||% SPORT,
+            commence_time = game$commence_time,
+            home_team     = game$home_team,
+            away_team     = game$away_team,
+            bookmaker     = book$key,
+            market        = mkt$key,
+            player_name   = o$description %||% NA_character_,
+            outcome_name  = o$name,
+            price         = o$price %||% NA_real_,
+            point         = o$point %||% NA_real_,
+            pulled_at     = pulled_at
+          )
+        })
+      })
+    })
+    all_rows[[gid]] <- rows
+  }
+
+  odds_df <- dplyr::bind_rows(all_rows)
+  if (nrow(odds_df) == 0) {
+    message("[player_props] No player prop rows returned for any game.")
+    return(invisible(odds_df))
+  }
+
+  for (i in seq_len(nrow(odds_df))) {
+    row <- odds_df[i, ]
+    dbExecute(con, "
+      INSERT OR REPLACE INTO player_prop_lines
+        (game_id, snapshot_type, sport_key, commence_time, home_team, away_team,
+         bookmaker, market, player_name, outcome_name, price, point, pulled_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ", unname(as.list(row)))
+  }
+
+  message(sprintf("[player_props] Saved %d prop line row(s) across %d game(s) [%s].",
+                  nrow(odds_df), length(unique(odds_df$game_id)), snapshot_type))
+  invisible(odds_df)
+}
