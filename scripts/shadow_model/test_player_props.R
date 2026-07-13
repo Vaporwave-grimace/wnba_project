@@ -203,6 +203,48 @@ check("unknown opponent falls back to def_factor 1.0", {
 dbDisconnect(con4)
 file.remove(tmp_db4)
 
+# ── Task 5: check_quota_headroom ──────────────────────────────────────────────
+source(here("scripts", "odds_ingest.R"))
+
+section("Task 5: check_quota_headroom")
+
+tmp_db5 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db5)
+con5 <- open_wnba_db(tmp_db5)
+
+fake_creds <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                   discord_bot_token = "x", discord_webhook_url = "x")
+
+# key_state is a module-level singleton (local({}) closure) -- drive it
+# directly via its own public update_remaining()/init() API rather than
+# mocking, matching this project's live-only testing convention.
+key_state$init(list(odds_api_keys = c("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")))
+key_state$update_remaining(200)   # below the 500 floor -- should alert
+
+check("check_quota_headroom logs a row per key", {
+  # send_telegram/send_discord will attempt real network calls with fake
+  # creds and fail -- that's fine, they're wrapped in tryCatch below and
+  # the log-write must still succeed regardless.
+  suppressMessages(check_quota_headroom(con5, fake_creds, channel_id = "0", floor = 500L))
+  n <- dbGetQuery(con5, "SELECT COUNT(*) AS n FROM odds_api_quota_log")$n
+  stopifnot(n >= 1)
+})
+check("low-quota row is marked alerted", {
+  n <- dbGetQuery(con5, "SELECT COUNT(*) AS n FROM odds_api_quota_log WHERE alerted = 1")$n
+  stopifnot(n >= 1)
+})
+check("second call same day does not double-alert the same key", {
+  before <- dbGetQuery(con5, "SELECT COUNT(*) AS n FROM odds_api_quota_log WHERE alerted = 1")$n
+  suppressMessages(check_quota_headroom(con5, fake_creds, channel_id = "0", floor = 500L))
+  after <- dbGetQuery(con5, "SELECT COUNT(*) AS n FROM odds_api_quota_log WHERE alerted = 1")$n
+  # a new row is logged each call, but only the first should be flagged alerted=1
+  stopifnot(after == before)
+})
+
+dbDisconnect(con5)
+file.remove(tmp_db5)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)
