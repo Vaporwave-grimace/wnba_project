@@ -974,7 +974,16 @@ setwd("G:/My Drive/Scripting Projects/wnba_project/scripts")
 source("db_setup.R"); source("odds_ingest.R"); source(here::here("scripts","shadow_model","player_props.R"))
 creds <- load_credentials(); key_state$init(creds)
 con <- open_wnba_db()
-today_ids <- dbGetQuery(con, "SELECT DISTINCT game_id FROM games")$game_id
+# Scoped to today only -- the unscoped "SELECT DISTINCT game_id FROM games"
+# this snippet originally had would fire one Odds API request per game_id
+# EVER stored (~860 across the whole season's history, including stale
+# ESPN IDs), not just today's slate. Caught live during Task 6 execution
+# (2026-07-13) before it burned real quota on the pool shared with
+# mlb_NRFI_YRFI.
+today_ids <- dbGetQuery(con, "
+  SELECT DISTINCT game_id FROM games
+  WHERE DATE(commence_time) = DATE('now') OR DATE(commence_time, '-4 hours') = DATE('now')
+")$game_id
 odds <- fetch_player_prop_odds(con, today_ids, snapshot_type = "midday")
 nrow(odds)   # expect > 0 if any games have posted prop lines yet today
 dbGetQuery(con, "SELECT COUNT(*) AS n FROM player_prop_lines")
