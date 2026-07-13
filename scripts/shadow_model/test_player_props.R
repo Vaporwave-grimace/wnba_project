@@ -297,21 +297,7 @@ file.remove(tmp_db6)
 # ── Task 7: bet_side encoding ──────────────────────────────────────────────────
 section("Task 7: .encode_prop_bet_side")
 
-# Try sourcing from bet_alerts.R; fallback to inline definition if needed
-# (bet_alerts.R has heavy dependencies that may not load in test environment)
-if (!exists(".encode_prop_bet_side")) {
-  tryCatch({
-    source(here("scripts", "bet_alerts.R"), local = FALSE)
-  }, error = function(e) {
-    NULL  # proceed with inline fallback
-  })
-}
-if (!exists(".encode_prop_bet_side")) {
-  # Fallback: define .encode_prop_bet_side inline (from scripts/bet_alerts.R)
-  .encode_prop_bet_side <- function(stat, side, point, player_name) {
-    sprintf("%s|%s|%.1f|%s", toupper(stat), toupper(side), point, player_name)
-  }
-}
+source(here("scripts", "bet_alerts.R"))
 
 check("encodes stat/side/point/player into pipe-delimited string", {
   s <- .encode_prop_bet_side("pts", "over", 24.5, "Sabrina Ionescu")

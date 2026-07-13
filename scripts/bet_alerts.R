@@ -55,6 +55,21 @@ KELLY_STAKE_CEILING <- 0.10
   else          as.integer(round((1 - p) / p * 100))
 }
 
+# Encodes a prop bet's identity into bet_side for open_bets' natural-key
+# unique index (game_date, away_team, home_team, bet_side, pipeline).
+# That index has no player column and open_bets is a shared cross-sport
+# table (bet_router) -- migrating its index has higher blast radius than
+# fixing this here. | is the delimiter, not _, because player names can
+# contain spaces/apostrophes/hyphens but never a pipe character.
+# Format: "STAT|SIDE|POINT|PLAYER_NAME", e.g. "PTS|OVER|24.5|Sabrina Ionescu"
+# Point is included (not just stat/side/player) so a line move between
+# fetches produces a distinct bet_side, same behavior totals/spreads
+# already get for free by embedding the point directly in their play text.
+# Keep in sync with .decode_prop_bet_side() in bet_router/scripts/settler.R.
+.encode_prop_bet_side <- function(stat, side, point, player_name) {
+  sprintf("%s|%s|%.1f|%s", toupper(stat), toupper(side), point, player_name)
+}
+
 # Half Kelly by default — full Kelly is too aggressive on an uncalibrated model.
 # Returns the fraction of bankroll to risk (0 if edge is negative).
 .kelly_fraction <- function(model_prob, odds, fraction = 0.5) {
