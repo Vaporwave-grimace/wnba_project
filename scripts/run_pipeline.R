@@ -170,6 +170,10 @@ if (hour_et() >= SETTLE_HOUR && !has_run_today("settle", con)) {
     })
   }
 
+  log_info("MORNING — syncing player box scores + defense factors")
+  safe_run(sync_player_box_scores(con, SEASON), "player box score sync")
+  safe_run(compute_team_def_factors(con, SEASON), "team defense factor refresh")
+
   mark_run_today("settle", con)
 
   # Mispricing model calibration — DEV_THRESHOLD sweep + injury accuracy check
@@ -229,6 +233,33 @@ if (hour_et() >= MIDDAY_HOUR) {
   }
 }
 
+# ── Step 2b: Player prop odds + edge detection (midday) ─────────────────────
+#
+# Gated by PROP_ALERTS_ENABLED -- flip to TRUE only after confirming
+# check_quota_headroom() has logged at least one clean run (see Task 5 /
+# design doc's hard gate: don't fire live prop alerts until quota
+# logging+alerting is verified working, not just present in the code).
+PROP_ALERTS_ENABLED <- FALSE
+
+if (hour_et() >= MIDDAY_HOUR) {
+  today_str      <- format(now_et(), "%Y-%m-%d")
+  today_game_ids <- tryCatch(
+    dbGetQuery(con, "SELECT DISTINCT game_id FROM games WHERE DATE(commence_time) = ? OR DATE(commence_time, '-4 hours') = ?",
+              list(today_str, today_str))$game_id,
+    error = \(e) character(0)
+  )
+
+  if (length(today_game_ids) > 0) {
+    log_info("MIDDAY — fetching player prop odds for ", length(today_game_ids), " game(s)")
+    safe_run(fetch_player_prop_odds(con, today_game_ids, snapshot_type = "midday"),
+             "player prop odds fetch")
+    safe_run(check_quota_headroom(con, creds, channel_id = STEAM_CHANNEL_ID),
+             "prop odds quota check")
+    safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
+             "player prop edge detection")
+  }
+}
+
 # ── Step 3: Closing snapshot (pre-tip, per game) ──────────────────────────────
 
 near_tip_games <- games_near_tip()
@@ -254,6 +285,18 @@ if (length(near_tip_games) > 0) {
   } else {
     log_info("Closing already captured for all near-tip games, skipping")
   }
+}
+
+# ── Step 3b-prop: near-tip prop odds refresh ─────────────────────────────────
+
+if (length(near_tip_games) > 0) {
+  log_info("PRE-TIP — refreshing player prop odds for ", length(near_tip_games), " game(s)")
+  safe_run(fetch_player_prop_odds(con, near_tip_games, snapshot_type = "closing"),
+           "near-tip player prop odds fetch")
+  safe_run(check_quota_headroom(con, creds, channel_id = STEAM_CHANNEL_ID),
+           "prop odds quota check (near-tip)")
+  safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
+           "player prop edge detection (near-tip)")
 }
 
 # ── Step 3b: Continuous steam check (every invocation) ───────────────────────
