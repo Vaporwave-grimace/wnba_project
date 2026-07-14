@@ -235,11 +235,16 @@ if (hour_et() >= MIDDAY_HOUR) {
 
 # ── Step 2b: Player prop odds + edge detection (midday) ─────────────────────
 #
-# Gated by PROP_ALERTS_ENABLED -- flip to TRUE only after confirming
-# check_quota_headroom() has logged at least one clean run (see Task 5 /
-# design doc's hard gate: don't fire live prop alerts until quota
-# logging+alerting is verified working, not just present in the code).
-PROP_ALERTS_ENABLED <- FALSE
+# Gated by PROP_ALERTS_ENABLED. Flipped to TRUE 2026-07-14 after: (1) quota
+# logging/alerting verified live (check_quota_headroom() correctly caught
+# and alerted on a depleted key, confirmed against real Odds API dashboard
+# numbers -- 15,648/20,000 monthly, 78% used, healthy headroom); (2) EV/
+# model_prob output spot-checked against 8 real players -- plausible means/
+# SDs, no degenerate values, edges correlate correctly with line distance
+# from projection; (3) wehoop 2026-season data bug fixed (missing arrow
+# package), player_box_scores/team_def_factors now populated with real
+# data. See CLAUDE.md for full writeup.
+PROP_ALERTS_ENABLED <- TRUE
 
 if (hour_et() >= MIDDAY_HOUR) {
   today_str        <- format(now_et(), "%Y-%m-%d")
