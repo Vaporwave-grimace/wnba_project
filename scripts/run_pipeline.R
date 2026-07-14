@@ -304,12 +304,32 @@ if (length(near_tip_games) > 0) {
 
 if (length(near_tip_games) > 0) {
   log_info("PRE-TIP — refreshing player prop odds for ", length(near_tip_games), " game(s)")
-  safe_run(fetch_player_prop_odds(con, near_tip_games, snapshot_type = "closing"),
-           "near-tip player prop odds fetch")
-  safe_run(check_quota_headroom(con, creds, channel_id = STEAM_CHANNEL_ID),
-           "prop odds quota check (near-tip)")
-  safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
-           "player prop edge detection (near-tip)")
+
+  # Only capture closing props if not already done for these games — mirrors
+  # the Step 3 team-lines idempotency guard above. Without this, a game that
+  # stays "near tip" (within the pre-tip window) for 2-3 consecutive ~30-min
+  # pipeline cycles gets its prop odds re-fetched every cycle, burning Odds
+  # API quota unnecessarily.
+  props_already_closed <- tryCatch(
+    dbGetQuery(con, "
+      SELECT DISTINCT game_id FROM player_prop_lines WHERE snapshot_type = 'closing'
+    ")$game_id,
+    error = \(e) character(0)
+  )
+
+  props_pending <- setdiff(near_tip_games, props_already_closed)
+
+  if (length(props_pending) > 0) {
+    log_info("Fetching closing prop odds for ", length(props_pending), " game(s)")
+    safe_run(fetch_player_prop_odds(con, props_pending, snapshot_type = "closing"),
+             "near-tip player prop odds fetch")
+    safe_run(check_quota_headroom(con, creds, channel_id = STEAM_CHANNEL_ID),
+             "prop odds quota check (near-tip)")
+    safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
+             "player prop edge detection (near-tip)")
+  } else {
+    log_info("Closing props already captured for all near-tip games, skipping")
+  }
 }
 
 # ── Step 3b: Continuous steam check (every invocation) ───────────────────────

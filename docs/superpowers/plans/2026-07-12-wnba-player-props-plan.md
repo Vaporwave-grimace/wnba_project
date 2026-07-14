@@ -1834,7 +1834,12 @@ git commit -m "Add settle_wnba_prop_bets() -- grades player props via player_box
 this plan completes. Flip it to `TRUE` only after:
 1. At least one full day of dry-run pipeline invocations with no errors.
 2. Confirming `odds_api_quota_log` shows healthy remaining-quota numbers
-   across the shared key pool (no key near the 500 floor).
+   across the shared key pool (no key near the 500 floor). Note:
+   `check_quota_headroom()` only logs keys actually used during a given run
+   — a key untouched this run has no `remaining` value and won't appear —
+   so in practice this log will typically only cover 1-2 of the 10 shared
+   keys, not the full pool. Treat an absence of warnings as "no problems
+   seen on the keys we happened to use," not full-pool confirmation.
 3. Manually reviewing a sample of `detect_prop_edges()`'s dry-run output
    (`send_alerts = FALSE`) for sane `model_prob`/`ev_pct` values.
 
