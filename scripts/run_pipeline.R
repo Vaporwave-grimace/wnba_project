@@ -242,21 +242,34 @@ if (hour_et() >= MIDDAY_HOUR) {
 PROP_ALERTS_ENABLED <- FALSE
 
 if (hour_et() >= MIDDAY_HOUR) {
-  today_str      <- format(now_et(), "%Y-%m-%d")
-  today_game_ids <- tryCatch(
-    dbGetQuery(con, "SELECT DISTINCT game_id FROM games WHERE DATE(commence_time) = ? OR DATE(commence_time, '-4 hours') = ?",
-              list(today_str, today_str))$game_id,
-    error = \(e) character(0)
+  today_str        <- format(now_et(), "%Y-%m-%d")
+  prop_midday_count <- tryCatch(
+    dbGetQuery(con, "
+      SELECT COUNT(*) AS n FROM player_prop_lines
+      WHERE snapshot_type = 'midday'
+        AND DATE(pulled_at) = ?
+    ", list(today_str))$n,
+    error = \(e) 1L
   )
 
-  if (length(today_game_ids) > 0) {
-    log_info("MIDDAY — fetching player prop odds for ", length(today_game_ids), " game(s)")
-    safe_run(fetch_player_prop_odds(con, today_game_ids, snapshot_type = "midday"),
-             "player prop odds fetch")
-    safe_run(check_quota_headroom(con, creds, channel_id = STEAM_CHANNEL_ID),
-             "prop odds quota check")
-    safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
-             "player prop edge detection")
+  if (prop_midday_count == 0) {
+    today_game_ids <- tryCatch(
+      dbGetQuery(con, "SELECT DISTINCT game_id FROM games WHERE DATE(commence_time) = ? OR DATE(commence_time, '-4 hours') = ?",
+                list(today_str, today_str))$game_id,
+      error = \(e) character(0)
+    )
+
+    if (length(today_game_ids) > 0) {
+      log_info("MIDDAY — fetching player prop odds for ", length(today_game_ids), " game(s)")
+      safe_run(fetch_player_prop_odds(con, today_game_ids, snapshot_type = "midday"),
+               "player prop odds fetch")
+      safe_run(check_quota_headroom(con, creds, channel_id = STEAM_CHANNEL_ID),
+               "prop odds quota check")
+      safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
+               "player prop edge detection")
+    }
+  } else {
+    log_info("MIDDAY — player prop odds already captured today, skipping")
   }
 }
 
