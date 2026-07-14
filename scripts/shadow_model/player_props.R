@@ -293,3 +293,78 @@ fetch_player_prop_odds <- function(con, game_ids, snapshot_type = "midday") {
                   nrow(odds_df), length(unique(odds_df$game_id)), snapshot_type))
   invisible(odds_df)
 }
+
+# ── Orchestrator ───────────────────────────────────────────────────────────────
+
+# For every (game, player, stat) with a posted line in player_prop_lines,
+# compute a projection and evaluate both Over and Under. emit_wnba_bet_alert()
+# handles the EV filter and Kelly sizing -- this function's job is just to
+# figure out each player's opponent and hand off model_line/sd.
+detect_prop_edges <- function(con, creds, send_alerts = TRUE,
+                              season = as.integer(format(Sys.Date(), "%Y"))) {
+  candidates <- dbGetQuery(con, "
+    SELECT DISTINCT ppl.game_id, ppl.player_name, ppl.market,
+           ppl.home_team, ppl.away_team
+    FROM player_prop_lines ppl
+    WHERE ppl.snapshot_type = (
+      SELECT snapshot_type FROM player_prop_lines ppl2
+      WHERE ppl2.game_id = ppl.game_id
+      ORDER BY pulled_at DESC LIMIT 1
+    )
+  ")
+
+  if (nrow(candidates) == 0) {
+    message("[player_props] No prop line candidates to evaluate.")
+    return(invisible(0L))
+  }
+
+  n_fired <- 0L
+  for (i in seq_len(nrow(candidates))) {
+    row  <- candidates[i, ]
+    stat <- names(STAT_MARKET_MAP)[STAT_MARKET_MAP == row$market]
+    if (length(stat) == 0) next
+
+    player_team <- dbGetQuery(con, "
+      SELECT team FROM player_box_scores WHERE player_name = ?
+      ORDER BY game_date DESC LIMIT 1
+    ", list(row$player_name))$team[1]
+
+    opponent <- if (!is.na(player_team) && identical(player_team, row$home_team)) {
+      row$away_team
+    } else if (!is.na(player_team) && identical(player_team, row$away_team)) {
+      row$home_team
+    } else {
+      ""   # unknown team assignment -- .lookup_def_factor() passes through at 1.0
+    }
+
+    proj <- compute_prop_projection(row$player_name, stat, opponent, con, season)
+    if (is.null(proj)) next
+
+    for (side in c("over", "under")) {
+      res <- tryCatch(
+        emit_wnba_bet_alert(
+          game_id     = row$game_id,
+          market      = "prop",
+          side        = side,
+          model_line  = proj$projected_mean,
+          mkt_line    = NA_real_,
+          con         = con,
+          creds       = creds,
+          player_name = row$player_name,
+          stat        = stat,
+          sd          = proj$baseline_sd,
+          send_alerts = send_alerts
+        ),
+        error = function(e) {
+          message("[player_props] alert error for ", row$player_name, " ", stat, " ", side,
+                  ": ", e$message)
+          NULL
+        }
+      )
+      if (!is.null(res) && isTRUE(res$fired)) n_fired <- n_fired + 1L
+    }
+  }
+
+  message(sprintf("[player_props] detect_prop_edges complete -- %d alert(s) fired", n_fired))
+  invisible(n_fired)
+}
