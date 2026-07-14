@@ -42,8 +42,16 @@ check <- function(label, expr) {
 # ── 1. Packages ───────────────────────────────────────────────────────────────
 section("1. Required packages")
 
+# "arrow" isn't a direct wehoop dependency for completed-season data, but the
+# CURRENT (in-progress) season's cached box score file is serialized with
+# arrow-backed ALTREP integer vectors -- without arrow installed, R silently
+# degrades those columns to zero-length vectors instead of erroring, which
+# surfaces as every row having NA game_id/athlete_display_name. Confirmed
+# live 2026-07-14: missing arrow caused wehoop::load_wnba_player_box(2026)
+# to return 4256 rows with 100% NA IDs; installing arrow (24.0.0) fixed it
+# immediately with zero code changes.
 required_pkgs <- c("httr2", "dplyr", "purrr", "tidyr", "jsonlite",
-                   "DBI", "RSQLite", "lubridate", "here", "wehoop")
+                   "DBI", "RSQLite", "lubridate", "here", "wehoop", "arrow")
 
 for (pkg in required_pkgs) {
   check(pkg, {
