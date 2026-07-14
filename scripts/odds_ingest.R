@@ -544,3 +544,52 @@ run_collection <- function(snapshot_type, con, compare_to = NULL) {
   # Return both odds and any steam flags so callers can send alerts
   invisible(list(odds = odds, steam = steam))
 }
+
+# ── Quota headroom logging + alert ────────────────────────────────────────────
+#
+# This pool of 10 Odds API keys is shared with mlb_NRFI_YRFI (confirmed in
+# that project's CLAUDE.md), which had an 11-day silent dead-key outage in
+# July 2026 from insufficient headroom monitoring -- discovering the pool
+# is exhausted is worse than any gap in prop coverage. Every prop-fetching
+# call logs remaining quota per key; an alert fires once per key per day
+# when any key drops below `floor`.
+
+ODDS_API_QUOTA_FLOOR <- 500L
+
+check_quota_headroom <- function(con, creds, channel_id, floor = ODDS_API_QUOTA_FLOOR) {
+  status <- key_state$status()
+
+  for (i in seq_len(nrow(status))) {
+    row <- status[i, ]
+    if (is.na(row$remaining)) next
+
+    dbExecute(con, "
+      INSERT INTO odds_api_quota_log (key_index, key_tail, remaining)
+      VALUES (?, ?, ?)
+    ", list(row$index, row$key_tail, row$remaining))
+
+    if (row$remaining < floor) {
+      already_alerted <- dbGetQuery(con, "
+        SELECT COUNT(*) AS n FROM odds_api_quota_log
+        WHERE key_index = ? AND DATE(checked_at) = DATE('now') AND alerted = 1
+      ", list(row$index))$n > 0
+
+      if (!already_alerted) {
+        msg <- sprintf(
+          "⚠️ WNBA Odds API key #%d low (...%s) -- %d requests remaining (floor: %d). Shared pool with mlb_NRFI_YRFI.",
+          row$index, row$key_tail, row$remaining, floor
+        )
+        tryCatch(send_telegram(msg, creds), error = function(e) NULL)
+        tryCatch(send_discord(msg, creds, channel_id = channel_id), error = function(e) NULL)
+        dbExecute(con, "
+          UPDATE odds_api_quota_log SET alerted = 1
+          WHERE id = (SELECT MAX(id) FROM odds_api_quota_log WHERE key_index = ?)
+        ", list(row$index))
+        message(sprintf("[quota] LOW QUOTA ALERT sent for key #%d (%d remaining)",
+                        row$index, row$remaining))
+      }
+    }
+  }
+
+  invisible(status)
+}

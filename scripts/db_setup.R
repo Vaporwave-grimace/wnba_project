@@ -31,12 +31,6 @@ init_db <- function(path = DB_PATH) {
     )
   ")
 
-  # Backfill from existing lines data (idempotent — INSERT OR IGNORE)
-  dbExecute(con, "
-    INSERT OR IGNORE INTO games (game_id, commence_time, home_team, away_team)
-    SELECT DISTINCT game_id, commence_time, home_team, away_team FROM lines
-  ")
-
   # Snapshot of opening and closing lines per game
   dbExecute(con, "
     CREATE TABLE IF NOT EXISTS lines (
@@ -55,6 +49,12 @@ init_db <- function(path = DB_PATH) {
       PRIMARY KEY (game_id, snapshot_type, bookmaker, market, outcome_name),
       FOREIGN KEY (game_id) REFERENCES games(game_id)
     )
+  ")
+
+  # Backfill from existing lines data (idempotent — INSERT OR IGNORE)
+  dbExecute(con, "
+    INSERT OR IGNORE INTO games (game_id, commence_time, home_team, away_team)
+    SELECT DISTINCT game_id, commence_time, home_team, away_team FROM lines
   ")
 
   # Steam movement log — rapid cross-book line shifts
@@ -100,21 +100,6 @@ init_db <- function(path = DB_PATH) {
     ON steam_log (game_id, market, outcome_name, direction)
     WHERE resolved = 0
   ")
-
-  # Idempotent migrations for clv_log
-  clv_cols <- dbListFields(con, "clv_log")
-  if (!"steam_direction" %in% clv_cols) {
-    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN steam_direction TEXT")
-    message("[db_setup] Migrated clv_log: added steam_direction column")
-  }
-  if (!"market_line_at_bet" %in% clv_cols) {
-    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN market_line_at_bet REAL")
-    message("[db_setup] Migrated clv_log: added market_line_at_bet column")
-  }
-  if (!"trigger" %in% clv_cols) {
-    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN trigger TEXT DEFAULT 'steam'")
-    message("[db_setup] Migrated clv_log: added trigger column")
-  }
 
   # ── Roster / stats tables ─────────────────────────────────────────────────────
 
@@ -239,6 +224,21 @@ init_db <- function(path = DB_PATH) {
     )
   ")
 
+  # Idempotent migrations for clv_log
+  clv_cols <- dbListFields(con, "clv_log")
+  if (!"steam_direction" %in% clv_cols) {
+    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN steam_direction TEXT")
+    message("[db_setup] Migrated clv_log: added steam_direction column")
+  }
+  if (!"market_line_at_bet" %in% clv_cols) {
+    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN market_line_at_bet REAL")
+    message("[db_setup] Migrated clv_log: added market_line_at_bet column")
+  }
+  if (!"trigger" %in% clv_cols) {
+    dbExecute(con, "ALTER TABLE clv_log ADD COLUMN trigger TEXT DEFAULT 'steam'")
+    message("[db_setup] Migrated clv_log: added trigger column")
+  }
+
   dbExecute(con, "
     CREATE TABLE IF NOT EXISTS pipeline_runs (
       step      TEXT,
@@ -278,6 +278,81 @@ init_db <- function(path = DB_PATH) {
       "INSERT OR IGNORE INTO model_config (param, value, notes) VALUES (?, ?, ?)",
       d)
   }
+
+  # ── Player props tables (added 2026-07-12) ────────────────────────────────
+
+  # Cache of wehoop's season box scores. load_wnba_player_box() always
+  # returns the full season regardless of date args -- there's no
+  # incremental fetch to exploit, so sync_player_box_scores() re-pulls the
+  # full season every run and relies on INSERT OR IGNORE against this PK
+  # for idempotency, rather than a MAX(game_date) watermark (which would
+  # silently stop backfilling past any gap in wehoop's own data).
+  dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS player_box_scores (
+      game_id     TEXT,
+      game_date   DATE,
+      player_name TEXT,
+      team        TEXT,
+      opponent    TEXT,
+      min         REAL,
+      pts         INTEGER,
+      reb         INTEGER,
+      ast         INTEGER,
+      PRIMARY KEY (game_id, player_name)
+    )
+  ")
+
+  # Player prop odds snapshots -- mirrors `lines` but keyed per-player.
+  # market: player_points | player_rebounds | player_assists |
+  #         player_points_rebounds_assists
+  dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS player_prop_lines (
+      game_id       TEXT,
+      snapshot_type TEXT,
+      sport_key     TEXT,
+      commence_time TEXT,
+      home_team     TEXT,
+      away_team     TEXT,
+      bookmaker     TEXT,
+      market        TEXT,
+      player_name   TEXT,
+      outcome_name  TEXT,
+      price         REAL,
+      point         REAL,
+      pulled_at     TEXT,
+      PRIMARY KEY (game_id, snapshot_type, bookmaker, market, player_name, outcome_name)
+    )
+  ")
+
+  # Opponent-allowed rate per stat vs league average, refreshed daily by
+  # compute_team_def_factors(). stat: pts | reb | ast | pra
+  dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS team_def_factors (
+      team        TEXT,
+      stat        TEXT,
+      allowed_avg REAL,
+      league_avg  REAL,
+      factor      REAL,
+      season      INTEGER,
+      updated_at  TEXT,
+      PRIMARY KEY (team, stat, season)
+    )
+  ")
+
+  # Odds API quota headroom log -- one row per key per check_quota_headroom()
+  # call. Backs the hard gate on prop-fetching: alerted=1 marks that a low-
+  # quota Telegram/Discord alert was already sent for that key today, so we
+  # don't spam on every pipeline invocation.
+  dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS odds_api_quota_log (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      checked_at  TEXT DEFAULT (datetime('now')),
+      key_index   INTEGER,
+      key_tail    TEXT,
+      remaining   INTEGER,
+      alerted     INTEGER DEFAULT 0
+    )
+  ")
 
   # Idempotent migration: gate_passed column on clv_log
   # 1 = alert fired (passed steam/AN gate), 0 = detected but not alerted

@@ -170,6 +170,10 @@ if (hour_et() >= SETTLE_HOUR && !has_run_today("settle", con)) {
     })
   }
 
+  log_info("MORNING — syncing player box scores + defense factors")
+  safe_run(sync_player_box_scores(con, SEASON), "player box score sync")
+  safe_run(compute_team_def_factors(con, SEASON), "team defense factor refresh")
+
   mark_run_today("settle", con)
 
   # Mispricing model calibration — DEV_THRESHOLD sweep + injury accuracy check
@@ -229,6 +233,46 @@ if (hour_et() >= MIDDAY_HOUR) {
   }
 }
 
+# ── Step 2b: Player prop odds + edge detection (midday) ─────────────────────
+#
+# Gated by PROP_ALERTS_ENABLED -- flip to TRUE only after confirming
+# check_quota_headroom() has logged at least one clean run (see Task 5 /
+# design doc's hard gate: don't fire live prop alerts until quota
+# logging+alerting is verified working, not just present in the code).
+PROP_ALERTS_ENABLED <- FALSE
+
+if (hour_et() >= MIDDAY_HOUR) {
+  today_str        <- format(now_et(), "%Y-%m-%d")
+  prop_midday_count <- tryCatch(
+    dbGetQuery(con, "
+      SELECT COUNT(*) AS n FROM player_prop_lines
+      WHERE snapshot_type = 'midday'
+        AND DATE(pulled_at) = ?
+    ", list(today_str))$n,
+    error = \(e) 1L
+  )
+
+  if (prop_midday_count == 0) {
+    today_game_ids <- tryCatch(
+      dbGetQuery(con, "SELECT DISTINCT game_id FROM games WHERE DATE(commence_time) = ? OR DATE(commence_time, '-4 hours') = ?",
+                list(today_str, today_str))$game_id,
+      error = \(e) character(0)
+    )
+
+    if (length(today_game_ids) > 0) {
+      log_info("MIDDAY — fetching player prop odds for ", length(today_game_ids), " game(s)")
+      safe_run(fetch_player_prop_odds(con, today_game_ids, snapshot_type = "midday"),
+               "player prop odds fetch")
+      safe_run(check_quota_headroom(con, creds, channel_id = STEAM_CHANNEL_ID),
+               "prop odds quota check")
+      safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
+               "player prop edge detection")
+    }
+  } else {
+    log_info("MIDDAY — player prop odds already captured today, skipping")
+  }
+}
+
 # ── Step 3: Closing snapshot (pre-tip, per game) ──────────────────────────────
 
 near_tip_games <- games_near_tip()
@@ -253,6 +297,38 @@ if (length(near_tip_games) > 0) {
     safe_run(compute_wnba_clv(con), "CLV settlement")
   } else {
     log_info("Closing already captured for all near-tip games, skipping")
+  }
+}
+
+# ── Step 3b-prop: near-tip prop odds refresh ─────────────────────────────────
+
+if (length(near_tip_games) > 0) {
+  log_info("PRE-TIP — refreshing player prop odds for ", length(near_tip_games), " game(s)")
+
+  # Only capture closing props if not already done for these games — mirrors
+  # the Step 3 team-lines idempotency guard above. Without this, a game that
+  # stays "near tip" (within the pre-tip window) for 2-3 consecutive ~30-min
+  # pipeline cycles gets its prop odds re-fetched every cycle, burning Odds
+  # API quota unnecessarily.
+  props_already_closed <- tryCatch(
+    dbGetQuery(con, "
+      SELECT DISTINCT game_id FROM player_prop_lines WHERE snapshot_type = 'closing'
+    ")$game_id,
+    error = \(e) character(0)
+  )
+
+  props_pending <- setdiff(near_tip_games, props_already_closed)
+
+  if (length(props_pending) > 0) {
+    log_info("Fetching closing prop odds for ", length(props_pending), " game(s)")
+    safe_run(fetch_player_prop_odds(con, props_pending, snapshot_type = "closing"),
+             "near-tip player prop odds fetch")
+    safe_run(check_quota_headroom(con, creds, channel_id = STEAM_CHANNEL_ID),
+             "prop odds quota check (near-tip)")
+    safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
+             "player prop edge detection (near-tip)")
+  } else {
+    log_info("Closing props already captured for all near-tip games, skipping")
   }
 }
 

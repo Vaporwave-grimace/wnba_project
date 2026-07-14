@@ -974,7 +974,16 @@ setwd("G:/My Drive/Scripting Projects/wnba_project/scripts")
 source("db_setup.R"); source("odds_ingest.R"); source(here::here("scripts","shadow_model","player_props.R"))
 creds <- load_credentials(); key_state$init(creds)
 con <- open_wnba_db()
-today_ids <- dbGetQuery(con, "SELECT DISTINCT game_id FROM games")$game_id
+# Scoped to today only -- the unscoped "SELECT DISTINCT game_id FROM games"
+# this snippet originally had would fire one Odds API request per game_id
+# EVER stored (~860 across the whole season's history, including stale
+# ESPN IDs), not just today's slate. Caught live during Task 6 execution
+# (2026-07-13) before it burned real quota on the pool shared with
+# mlb_NRFI_YRFI.
+today_ids <- dbGetQuery(con, "
+  SELECT DISTINCT game_id FROM games
+  WHERE DATE(commence_time) = DATE('now') OR DATE(commence_time, '-4 hours') = DATE('now')
+")$game_id
 odds <- fetch_player_prop_odds(con, today_ids, snapshot_type = "midday")
 nrow(odds)   # expect > 0 if any games have posted prop lines yet today
 dbGetQuery(con, "SELECT COUNT(*) AS n FROM player_prop_lines")
@@ -1825,7 +1834,12 @@ git commit -m "Add settle_wnba_prop_bets() -- grades player props via player_box
 this plan completes. Flip it to `TRUE` only after:
 1. At least one full day of dry-run pipeline invocations with no errors.
 2. Confirming `odds_api_quota_log` shows healthy remaining-quota numbers
-   across the shared key pool (no key near the 500 floor).
+   across the shared key pool (no key near the 500 floor). Note:
+   `check_quota_headroom()` only logs keys actually used during a given run
+   — a key untouched this run has no `remaining` value and won't appear —
+   so in practice this log will typically only cover 1-2 of the 10 shared
+   keys, not the full pool. Treat an absence of warnings as "no problems
+   seen on the keys we happened to use," not full-pool confirmation.
 3. Manually reviewing a sample of `detect_prop_edges()`'s dry-run output
    (`send_alerts = FALSE`) for sane `model_prob`/`ev_pct` values.
 

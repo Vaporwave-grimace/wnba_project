@@ -11,6 +11,7 @@ library(DBI)
 library(RSQLite)
 
 source(here::here("scripts", "broadcast_schema.R"))
+source(here::here("scripts", "shadow_model", "player_props.R"))
 
 WNBA_EXPORTS_DIR <- here::here("exports")
 
@@ -55,6 +56,21 @@ KELLY_STAKE_CEILING <- 0.10
   else          as.integer(round((1 - p) / p * 100))
 }
 
+# Encodes a prop bet's identity into bet_side for open_bets' natural-key
+# unique index (game_date, away_team, home_team, bet_side, pipeline).
+# That index has no player column and open_bets is a shared cross-sport
+# table (bet_router) -- migrating its index has higher blast radius than
+# fixing this here. | is the delimiter, not _, because player names can
+# contain spaces/apostrophes/hyphens but never a pipe character.
+# Format: "STAT|SIDE|POINT|PLAYER_NAME", e.g. "PTS|OVER|24.5|Sabrina Ionescu"
+# Point is included (not just stat/side/player) so a line move between
+# fetches produces a distinct bet_side, same behavior totals/spreads
+# already get for free by embedding the point directly in their play text.
+# Keep in sync with .decode_prop_bet_side() in bet_router/scripts/settler.R.
+.encode_prop_bet_side <- function(stat, side, point, player_name) {
+  sprintf("%s|%s|%.1f|%s", toupper(stat), toupper(side), point, player_name)
+}
+
 # Half Kelly by default — full Kelly is too aggressive on an uncalibrated model.
 # Returns the fraction of bankroll to risk (0 if edge is negative).
 .kelly_fraction <- function(model_prob, odds, fraction = 0.5) {
@@ -93,6 +109,36 @@ KELLY_STAKE_CEILING <- 0.10
        point = rows$point[1])
 }
 
+# Same book-preference logic as .best_book_odds(), against
+# player_prop_lines instead of lines (different table, different schema
+# -- player_name is part of the key).
+.best_prop_odds <- function(game_id, market, player_name, outcome_name, con) {
+  BOOK_PREF <- c("pinnacle", "betonlineag", "lowvig", "draftkings", "fanduel")
+  rows <- tryCatch(
+    dbGetQuery(con, "
+      SELECT bookmaker, price, point
+      FROM player_prop_lines
+      WHERE game_id      = ?
+        AND market       = ?
+        AND player_name  = ?
+        AND outcome_name = ?
+        AND snapshot_type = (
+          SELECT snapshot_type FROM player_prop_lines
+          WHERE game_id = ? AND player_name = ? AND market = ?
+          ORDER BY pulled_at DESC LIMIT 1
+        )
+    ", list(game_id, market, player_name, outcome_name, game_id, player_name, market)),
+    error = function(e) data.frame()
+  )
+  if (nrow(rows) == 0)
+    return(list(book = NA_character_, odds = NA_integer_, point = NA_real_))
+  rows$rank <- match(tolower(rows$bookmaker), BOOK_PREF, nomatch = 99L)
+  rows <- rows[order(rows$rank), ]
+  list(book  = rows$bookmaker[1],
+       odds  = as.integer(round(rows$price[1])),
+       point = rows$point[1])
+}
+
 # Game metadata: home_team, away_team, commence_time
 .game_meta <- function(game_id, con) {
   tryCatch(
@@ -113,7 +159,9 @@ KELLY_STAKE_CEILING <- 0.10
 # Returns the emitted message string, or NULL if below threshold / no odds.
 
 emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
-                                con, creds, steam_confirmed = FALSE) {
+                                con, creds, steam_confirmed = FALSE,
+                                player_name = NULL, stat = NULL, sd = NULL,
+                                send_alerts = TRUE) {
   meta <- .game_meta(game_id, con)
   if (nrow(meta) == 0) {
     message("[bet_alerts/WNBA] No game meta for ", game_id)
@@ -130,26 +178,36 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     bo    <- .best_book_odds(game_id, "totals", outcome_name, con)
     point <- if (!is.na(bo$point)) bo$point else mkt_line
     play  <- sprintf("%s %.1f", outcome_name, point)
-    sd    <- .WNBA_TOTAL_SD
     model_prob <- if (side == "over")
-      pnorm(point, mean = model_line, sd = sd, lower.tail = FALSE)
+      pnorm(point, mean = model_line, sd = .WNBA_TOTAL_SD, lower.tail = FALSE)
     else
-      pnorm(point, mean = model_line, sd = sd, lower.tail = TRUE)
+      pnorm(point, mean = model_line, sd = .WNBA_TOTAL_SD, lower.tail = TRUE)
 
-  } else {
+  } else if (market == "spreads") {
     # spreads: outcome_name = team name; point = team's spread (neg = favored)
     outcome_name <- if (side == "home") home_team else away_team
     bo    <- .best_book_odds(game_id, "spreads", outcome_name, con)
     point <- if (!is.na(bo$point)) bo$point else mkt_line
     play  <- sprintf("%s %+.1f", outcome_name, point)
-    sd    <- .WNBA_SPREAD_SD
     # Win condition: team covers its spread
     # home bet: actual_spread + point > 0  → P(actual_spread > -point)
     # away bet: -actual_spread + point > 0 → P(actual_spread < point)
     model_prob <- if (side == "home")
-      pnorm(-point, mean = model_line, sd = sd, lower.tail = FALSE)
+      pnorm(-point, mean = model_line, sd = .WNBA_SPREAD_SD, lower.tail = FALSE)
     else
-      pnorm(point,  mean = model_line, sd = sd, lower.tail = TRUE)
+      pnorm(point,  mean = model_line, sd = .WNBA_SPREAD_SD, lower.tail = TRUE)
+
+  } else if (market == "prop") {
+    stat_market  <- STAT_MARKET_MAP[[stat]]
+    outcome_name <- if (side == "over") "Over" else "Under"
+    bo    <- .best_prop_odds(game_id, stat_market, player_name, outcome_name, con)
+    point <- bo$point
+    play  <- sprintf("%s %s %.1f %s", player_name,
+                     if (side == "over") "Over" else "Under", point, toupper(stat))
+    model_prob <- if (side == "over")
+      pnorm(point, mean = model_line, sd = sd, lower.tail = FALSE)
+    else
+      pnorm(point, mean = model_line, sd = sd, lower.tail = TRUE)
   }
 
   model_prob <- min(model_prob, MODEL_PROB_CEILING)
@@ -157,7 +215,8 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
   if (is.na(bo$odds)) {
     message(sprintf("[bet_alerts/WNBA] No odds found for %s %s %s",
                     game_id, market, side))
-    return(invisible(NULL))
+    return(invisible(list(message = NULL, model_prob = model_prob, ev_pct = NA_real_,
+                          kelly = 0, fired = FALSE)))
   }
 
   # ── EV filter ────────────────────────────────────────────────────────────────
@@ -170,7 +229,8 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
   if (is.na(ev_pct) || ev_pct < MIN_EV_PCT) {
     message(sprintf("[bet_alerts/WNBA] %s %s %s — EV=%.1f%% below threshold (%.1f%%)",
                     game_id, market, side, ev_pct %||% 0, MIN_EV_PCT))
-    return(invisible(NULL))
+    return(invisible(list(message = NULL, model_prob = model_prob, ev_pct = ev_pct,
+                          kelly = kelly, fired = FALSE)))
   }
 
   # ── Metadata ─────────────────────────────────────────────────────────────────
@@ -227,6 +287,9 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     window     = window
   )
 
+  bet_side_value <- if (market == "prop") .encode_prop_bet_side(stat, side, point, player_name) else play
+
+  if (send_alerts) {
   send_telegram(msg, creds)
   send_discord(msg, creds, channel_id = .BROADCAST_CHANNEL)
 
@@ -246,7 +309,7 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
           ('WNBA','WNBA',?,?,?,?,?,?,?,?,?,'OPEN',datetime('now'),?,?,'CONFIRMED',?,?)
       ", list(
         game_date, away_team, home_team,
-        play,
+        bet_side_value,
         if (!is.na(bo$odds))    as.integer(bo$odds)    else NA,
         if (!is.na(fair_odds))  as.integer(fair_odds)  else NA,
         if (!is.na(model_prob)) as.numeric(model_prob) else NA,
@@ -272,8 +335,10 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     kelly_fraction = kelly,
     bet_amount     = kelly * 100   # Kelly units (bankroll = 100)
   )
+  }  # end if (send_alerts)
 
-  invisible(msg)
+  invisible(list(message = msg, model_prob = model_prob, ev_pct = ev_pct,
+                 kelly = kelly, fired = send_alerts))
 }
 
 # ── BET_HISTORY CSV ───────────────────────────────────────────────────────────
