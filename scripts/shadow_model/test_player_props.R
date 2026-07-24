@@ -314,6 +314,51 @@ check("round-trips through a manual split", {
            parts[4] == "Julie Allemand")
 })
 
+# ── Task 8: emit_wnba_bet_alert() returns play/fair_odds ───────────────────────
+section("Task 8: emit_wnba_bet_alert() play/fair_odds in return value")
+
+tmp_db8 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db8)
+con8 <- open_wnba_db(tmp_db8)
+
+# Must insert into games first due to foreign key constraint in lines table
+dbExecute(con8, "
+  INSERT INTO games (game_id, commence_time, home_team, away_team)
+  VALUES ('game8', '2026-06-10T23:00:00Z', 'Home Team', 'Rival Team')
+")
+dbExecute(con8, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game8', 'midday', 'Home Team', 'Rival Team', '2026-06-10T23:00:00Z')
+")
+dbExecute(con8, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game8', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
+     'Steady Scorer', 'Over', 120, 7.5, datetime('now'))
+")
+
+fake_creds8 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                    discord_bot_token = "x", discord_webhook_url = "x")
+
+check("returned list includes play and fair_odds for a real fired alert", {
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game8", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con8, creds = fake_creds8,
+    player_name = "Steady Scorer", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  stopifnot(!is.null(res$play))
+  stopifnot(res$play == "Steady Scorer Over 7.5 PTS")
+  stopifnot(!is.na(res$fair_odds))
+  stopifnot(is.numeric(res$fair_odds) || is.integer(res$fair_odds))
+})
+
+dbDisconnect(con8)
+file.remove(tmp_db8)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)
