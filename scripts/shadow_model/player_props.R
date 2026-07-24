@@ -445,7 +445,7 @@ send_prop_digest <- function(con, creds, min_ev = 6.0,
           NULL
         }
       )
-      if (!is.null(res) && !is.null(res$ev_pct) && !is.na(res$ev_pct) && res$ev_pct >= min_ev) {
+      if (!is.null(res) && !is.null(res$play) && !is.null(res$ev_pct) && !is.na(res$ev_pct) && res$ev_pct >= min_ev) {
         picks[[length(picks) + 1L]] <- list(play = res$play, fair_odds = res$fair_odds, ev_pct = res$ev_pct)
       }
     }
@@ -465,7 +465,7 @@ send_prop_digest <- function(con, creds, min_ev = 6.0,
   }, character(1))
 
   header <- sprintf("📋 **WNBA Daily Top Props** — %s (%d pick%s ≥%.0f%% EV)",
-                    format(Sys.time(), "%I:%M %p ET"), length(picks),
+                    format(with_tz(Sys.time(), "America/New_York"), "%I:%M %p ET"), length(picks),
                     if (length(picks) == 1) "" else "s", min_ev)
 
   msg <- paste(c(header, lines_out), collapse = "\n")

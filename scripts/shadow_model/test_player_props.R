@@ -424,6 +424,37 @@ check("min_ev above every real edge sends zero picks", {
   stopifnot(n == 0L)
 })
 
+# Second, independently-seeded candidate (different game/player) that also
+# clearly qualifies at >=5% EV but at a smaller edge than Steady Scorer's
+# Over pick -- exercises the descending-EV sort loop past a single pick.
+# Last-10 window (indices 3-12, trimming the first 2): 8,10,9,10,9,11,8,9,10,8
+# -> mean 9.2, projected_mean = 9.2 * 1.1 (Rival Team def_factor) = 10.12.
+# Over 8.5 at -110 is a real, sizeable edge but well below Steady Scorer's
+# Over 7.5 @ +120 edge (point is much closer to the projected mean here).
+seed_player_games(con9, "Backup Scorer", c(9,9, 8,10,9,10,9,11,8,9,10,8))
+dbExecute(con9, "
+  INSERT INTO games (game_id, home_team, away_team, commence_time) VALUES ('game9b', 'Some Team', 'Rival Team', '2026-06-10T23:00:00Z')
+")
+dbExecute(con9, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game9b', 'midday', 'Some Team', 'Rival Team', '2026-06-10T23:00:00Z')
+")
+dbExecute(con9, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game9b', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
+     'Backup Scorer', 'Over', -110, 8.5, datetime('now'))
+")
+
+check("digest scales to 2 qualifying picks across 2 games", {
+  n <- suppressWarnings(suppressMessages(
+    send_prop_digest(con9, fake_creds9, min_ev = 5.0, season = 2026L)
+  ))
+  stopifnot(n == 2L)
+})
+
 dbDisconnect(con9)
 file.remove(tmp_db9)
 
