@@ -301,14 +301,14 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
       on.exit(DBI::dbDisconnect(rcon), add = TRUE)
       DBI::dbExecute(rcon, "
         INSERT OR IGNORE INTO open_bets
-          (sport, pipeline, game_date, game_id, away_team, home_team,
+          (sport, pipeline, game_date, away_team, home_team,
            bet_side, odds, fair_odds, model_prob, ev_pct,
            game_time, status, fired_at, window, confidence, line_status,
            stake, kelly_fraction)
         VALUES
-          ('WNBA','WNBA',?,?,?,?,?,?,?,?,?,?,'OPEN',datetime('now'),?,?,'CONFIRMED',?,?)
+          ('WNBA','WNBA',?,?,?,?,?,?,?,?,?,'OPEN',datetime('now'),?,?,'CONFIRMED',?,?)
       ", list(
-        game_date, game_id, away_team, home_team,
+        game_date, away_team, home_team,
         bet_side_value,
         if (!is.na(bo$odds))    as.integer(bo$odds)    else NA,
         if (!is.na(fair_odds))  as.integer(fair_odds)  else NA,
