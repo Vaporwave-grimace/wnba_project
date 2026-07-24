@@ -359,6 +359,74 @@ check("returned list includes play and fair_odds for a real fired alert", {
 dbDisconnect(con8)
 file.remove(tmp_db8)
 
+# ── Task 9: send_prop_digest ────────────────────────────────────────────────────
+section("Task 9: send_prop_digest")
+
+tmp_db9 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db9)
+con9 <- open_wnba_db(tmp_db9)
+
+# Reuses the exact same fixture as the existing Task 4 compute_prop_projection
+# tests (12 games, last 10 average to pts=10, Rival Team's def_factor=1.1
+# -> projected_mean=11, real nonzero baseline_sd). player_box_scores.team =
+# "Some Team" for this player, so the candidate row's OTHER team must be
+# "Rival Team" for send_prop_digest's opponent lookup to resolve correctly.
+seed_player_games(con9, "Steady Scorer", c(10,10, 8,12,9,11,10,13,7,10,12,8))
+dbExecute(con9, "
+  INSERT INTO team_def_factors (team, stat, allowed_avg, league_avg, factor, season, updated_at)
+  VALUES ('Rival Team', 'pts', 22, 20, 1.1, 2026, datetime('now'))
+")
+
+# Must insert into games first due to foreign key constraint in lines table
+dbExecute(con9, "
+  INSERT INTO games (game_id, commence_time, home_team, away_team)
+  VALUES ('game9', '2026-06-10T23:00:00Z', 'Some Team', 'Rival Team')
+")
+dbExecute(con9, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game9', 'midday', 'Some Team', 'Rival Team', '2026-06-10T23:00:00Z')
+")
+# Over 7.5 at +120: point is far below the projected mean (11), so model_prob
+# for Over is very high -- a clearly large, positive EV regardless of the
+# exact baseline_sd value.
+# Under 7.5 at -500: same point, but for the losing side of a clearly
+# lopsided real distribution -- a clearly large NEGATIVE EV.
+dbExecute(con9, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
+     'Steady Scorer', 'Over', 120, 7.5, datetime('now')),
+    ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
+     'Steady Scorer', 'Under', -500, 7.5, datetime('now'))
+")
+
+fake_creds9 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                    discord_bot_token = "x", discord_webhook_url = "x")
+
+check("digest includes the clearly-qualifying Over pick, excludes the negative-EV Under", {
+  msg_sent <- NULL
+  # send_discord posts for real against fake creds and fails (network error) --
+  # that's fine and matches this project's existing convention (see the
+  # check_quota_headroom tests above); we only need send_prop_digest's return
+  # value and internal filtering logic, not a successful HTTP response.
+  n <- suppressWarnings(suppressMessages(
+    send_prop_digest(con9, fake_creds9, min_ev = 5.0, season = 2026L)
+  ))
+  stopifnot(n == 1L)
+})
+
+check("min_ev above every real edge sends zero picks", {
+  n <- suppressWarnings(suppressMessages(
+    send_prop_digest(con9, fake_creds9, min_ev = 500.0, season = 2026L)
+  ))
+  stopifnot(n == 0L)
+})
+
+dbDisconnect(con9)
+file.remove(tmp_db9)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)

@@ -368,3 +368,113 @@ detect_prop_edges <- function(con, creds, send_alerts = TRUE,
   message(sprintf("[player_props] detect_prop_edges complete -- %d alert(s) fired", n_fired))
   invisible(n_fired)
 }
+
+# ── Daily curated digest ───────────────────────────────────────────────────────
+#
+# Posts one plain-text summary of today's best currently-live prop edges
+# (>= min_ev) to Discord. Reuses the exact same candidate query and
+# projection/EV computation as detect_prop_edges() -- the only differences
+# are send_alerts = FALSE (no individual alert fires, no open_bets write, no
+# BET_HISTORY write -- all gated behind emit_wnba_bet_alert()'s own
+# `if (send_alerts)` block) and collecting every evaluated edge instead of
+# just counting fired ones.
+#
+# Does NOT call emit_broadcast() -- that produces the structured "PIPELINE:
+# WNBA" block bet_router auto-ingests from #auto-bet-broadcast. Reusing it
+# here would create duplicate open_bets rows for picks already logged by the
+# original real-time alert. This posts a plain string via send_discord()
+# instead, which bet_router's parser does not match.
+send_prop_digest <- function(con, creds, min_ev = 6.0,
+                             season = as.integer(format(Sys.Date(), "%Y"))) {
+  candidates <- dbGetQuery(con, "
+    SELECT DISTINCT ppl.game_id, ppl.player_name, ppl.market,
+           ppl.home_team, ppl.away_team
+    FROM player_prop_lines ppl
+    WHERE ppl.snapshot_type = (
+      SELECT snapshot_type FROM player_prop_lines ppl2
+      WHERE ppl2.game_id = ppl.game_id
+      ORDER BY pulled_at DESC LIMIT 1
+    )
+  ")
+
+  if (nrow(candidates) == 0) {
+    message("[player_props] Digest: no prop line candidates to evaluate.")
+    return(invisible(0L))
+  }
+
+  picks <- list()
+  for (i in seq_len(nrow(candidates))) {
+    row  <- candidates[i, ]
+    stat <- names(STAT_MARKET_MAP)[STAT_MARKET_MAP == row$market]
+    if (length(stat) == 0) next
+
+    player_team <- dbGetQuery(con, "
+      SELECT team FROM player_box_scores WHERE player_name = ?
+      ORDER BY game_date DESC LIMIT 1
+    ", list(row$player_name))$team[1]
+
+    opponent <- if (!is.na(player_team) && identical(player_team, row$home_team)) {
+      row$away_team
+    } else if (!is.na(player_team) && identical(player_team, row$away_team)) {
+      row$home_team
+    } else {
+      ""
+    }
+
+    proj <- compute_prop_projection(row$player_name, stat, opponent, con, season)
+    if (is.null(proj)) next
+
+    for (side in c("over", "under")) {
+      res <- tryCatch(
+        emit_wnba_bet_alert(
+          game_id     = row$game_id,
+          market      = "prop",
+          side        = side,
+          model_line  = proj$projected_mean,
+          mkt_line    = NA_real_,
+          con         = con,
+          creds       = creds,
+          player_name = row$player_name,
+          stat        = stat,
+          sd          = proj$baseline_sd,
+          send_alerts = FALSE
+        ),
+        error = function(e) {
+          message("[player_props] Digest eval error for ", row$player_name, " ", stat, " ", side,
+                  ": ", e$message)
+          NULL
+        }
+      )
+      if (!is.null(res) && !is.null(res$ev_pct) && !is.na(res$ev_pct) && res$ev_pct >= min_ev) {
+        picks[[length(picks) + 1L]] <- list(play = res$play, fair_odds = res$fair_odds, ev_pct = res$ev_pct)
+      }
+    }
+  }
+
+  if (length(picks) == 0) {
+    message(sprintf("[player_props] Digest: no edges >= %.1f%% EV today.", min_ev))
+    return(invisible(0L))
+  }
+
+  ev_order <- order(vapply(picks, function(p) p$ev_pct, numeric(1)), decreasing = TRUE)
+  picks    <- picks[ev_order]
+
+  lines_out <- vapply(seq_along(picks), function(i) {
+    p <- picks[[i]]
+    sprintf("%d. %s — Fair %+d | Edge %+.1f%%", i, p$play, as.integer(p$fair_odds), p$ev_pct)
+  }, character(1))
+
+  header <- sprintf("📋 **WNBA Daily Top Props** — %s (%d pick%s ≥%.0f%% EV)",
+                    format(Sys.time(), "%I:%M %p ET"), length(picks),
+                    if (length(picks) == 1) "" else "s", min_ev)
+
+  msg <- paste(c(header, lines_out), collapse = "\n")
+
+  tryCatch(
+    send_discord(msg, creds, channel_id = .BROADCAST_CHANNEL),
+    error = function(e) message("[player_props] Digest Discord send failed: ", e$message)
+  )
+
+  message(sprintf("[player_props] Digest sent -- %d pick(s) >= %.1f%% EV", length(picks), min_ev))
+  invisible(length(picks))
+}
