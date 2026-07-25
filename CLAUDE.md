@@ -130,12 +130,11 @@ Final return statement now includes `play` and `fair_odds` (both already compute
 - **Crash risk**: a below-3%-EV `emit_wnba_bet_alert()` result lacks `play`/`fair_odds` entirely (they're only set once code reaches the function's final return) — `send_prop_digest()`'s filter now explicitly checks `!is.null(res$play)` before trusting `ev_pct`, so a future call with `min_ev` set below 3.0 can't crash on a `NULL` field.
 - **Timezone**: the digest header originally used raw `Sys.time()` mislabeled "ET" with no real conversion — fixed to `lubridate::with_tz(Sys.time(), "America/New_York")`.
 
-### Known follow-ups (not done, logged for later — all Minor per final review)
+### Known follow-ups (all Minor per final review)
 
-- `send_prop_digest()` duplicates `detect_prop_edges()`'s candidate/opponent-resolution loop rather than sharing a helper — real but low-priority maintainability debt (the two functions could drift if one's query logic changes without the other).
-- Both functions currently evaluate every candidate twice per pipeline cycle (once each) — acceptable at current WNBA slate sizes, would matter more at higher candidate volume.
-- The "digest scales to 2 picks" test proves the loop doesn't crash with multiple qualifying edges but doesn't actually verify the descending-EV sort order of the rendered message (the sort itself is correct by code inspection).
-- Full live-pipeline verification against real posted prop lines was not possible this session — WNBA schedule gap, no games until 2026-07-28. Recommend a spot-check on the next real game day.
+- ~~Sort-order test gap~~ — ✅ fixed 2026-07-25: added a check that captures the real rendered message (via a test-local `send_discord()` stub, no production code touched) and confirms the higher-EV pick actually lists first, not just that the pick count is right.
+- **Candidate-loop duplication + double EV computation per cycle** — `send_prop_digest()` duplicates `detect_prop_edges()`'s candidate/opponent-resolution loop rather than sharing a helper, and both functions evaluate every candidate twice per pipeline cycle (once each). Real fix requires splitting `emit_wnba_bet_alert()`'s EV/odds computation from its posting side-effects so both callers can share one evaluation pass — a genuine refactor of production alert-firing code, not a quick patch. **Explicitly deferred** (2026-07-25 decision) until after the next real WNBA game (2026-07-28) so it can be verified against live data rather than seed-only tests, given the risk of touching code that's currently working correctly for real money.
+- Full live-pipeline verification against real posted prop lines was not possible this session — WNBA schedule gap, no games until 2026-07-28. Recommend a spot-check on the next real game day (covers both the digest's live behavior and, if the refactor above is tackled then, its regression risk).
 
 ---
 
