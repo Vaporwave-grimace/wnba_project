@@ -272,6 +272,8 @@ if (hour_et() >= MIDDAY_HOUR) {
                "prop odds quota check")
       safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
                "player prop edge detection")
+      safe_run(send_prop_digest(con, creds),
+               "WNBA prop digest (midday)")
     }
   } else {
     log_info("MIDDAY — player prop odds already captured today, skipping")
@@ -332,6 +334,8 @@ if (length(near_tip_games) > 0) {
              "prop odds quota check (near-tip)")
     safe_run(detect_prop_edges(con, creds, send_alerts = PROP_ALERTS_ENABLED),
              "player prop edge detection (near-tip)")
+    safe_run(send_prop_digest(con, creds),
+             "WNBA prop digest (near-tip)")
   } else {
     log_info("Closing props already captured for all near-tip games, skipping")
   }
