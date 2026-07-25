@@ -111,6 +111,34 @@ A health-check sweep (prompted by how bad the Pinnacle bug turned out to be) fou
 - **DB moved to local path (2026-06-28)** — `wnba_pipeline.sqlite` moved from Google Drive to `C:/Users/Mike/sports_data/`. All 10 scripts that defined `DB_PATH` updated. `open_wnba_db()` helper added to `db_setup.R`; `run_pipeline.R` and `wnba_settle.R` use it.
 - **PRAGMA foreign_keys (2026-06-28)** — `open_wnba_db()` now sets `PRAGMA foreign_keys = ON` on every connection. Was not set anywhere before.
 
+## Session Summary (2026-07-25, Session 11 — Daily Prop Edge Digest)
+
+Built via `superpowers:brainstorming` → `writing-plans` → `subagent-driven-development` (design spec + implementation plan in `docs/superpowers/`).
+
+### `scripts/shadow_model/player_props.R` — `send_prop_digest()`
+
+New function, posted twice per pipeline run (midday step, near-tip step): a curated summary of every currently-live prop edge clearing a 6% EV bar (`min_ev`, no fixed pick count), sorted descending by EV%, as ONE plain Discord message — replacing the need to track scattered individual real-time alerts (`detect_prop_edges()`, unchanged, still fires those independently at the existing 3% `MIN_EV_PCT` bar; the two are intentionally not deduped against each other — reposting is by design).
+
+Reuses `detect_prop_edges()`'s exact candidate query and calls `emit_wnba_bet_alert(..., send_alerts = FALSE)` per candidate/side to collect every evaluated edge (not just ones that fire), rather than duplicating the EV/projection math. **Does not call `emit_broadcast()`** — that produces the structured `PIPELINE: WNBA` block `bet_router` auto-ingests as a new tracked bet from `#auto-bet-broadcast`; reusing it for the digest would create duplicate `open_bets` rows for picks already logged by the original real-time alert. Posts a plain string via the existing `send_discord()` transport instead.
+
+### `scripts/bet_alerts.R` — `emit_wnba_bet_alert()` return value
+
+Final return statement now includes `play` and `fair_odds` (both already computed internally, just not previously returned) — needed by the digest to build its message without recomputing odds/EV itself. Added an inline comment noting that everything above the `if (send_alerts)` gate must stay side-effect-free, since the digest's read-only evaluation pass depends on that.
+
+### Bugs found and fixed during review (not present in the original plan)
+
+- **Crash risk**: a below-3%-EV `emit_wnba_bet_alert()` result lacks `play`/`fair_odds` entirely (they're only set once code reaches the function's final return) — `send_prop_digest()`'s filter now explicitly checks `!is.null(res$play)` before trusting `ev_pct`, so a future call with `min_ev` set below 3.0 can't crash on a `NULL` field.
+- **Timezone**: the digest header originally used raw `Sys.time()` mislabeled "ET" with no real conversion — fixed to `lubridate::with_tz(Sys.time(), "America/New_York")`.
+
+### Known follow-ups (not done, logged for later — all Minor per final review)
+
+- `send_prop_digest()` duplicates `detect_prop_edges()`'s candidate/opponent-resolution loop rather than sharing a helper — real but low-priority maintainability debt (the two functions could drift if one's query logic changes without the other).
+- Both functions currently evaluate every candidate twice per pipeline cycle (once each) — acceptable at current WNBA slate sizes, would matter more at higher candidate volume.
+- The "digest scales to 2 picks" test proves the loop doesn't crash with multiple qualifying edges but doesn't actually verify the descending-EV sort order of the rendered message (the sort itself is correct by code inspection).
+- Full live-pipeline verification against real posted prop lines was not possible this session — WNBA schedule gap, no games until 2026-07-28. Recommend a spot-check on the next real game day.
+
+---
+
 ## Session Summary (2026-07-09, Session 10 — Silent-Failure Sweep: Injuries + Action Network)
 
 Prompted by how serious the Pinnacle bug turned out to be (Session 9, below) — hunted for the same failure class (silently returns nothing, never crashes) elsewhere in the pipeline. Found three more, all confirmed live and fixed same session.
