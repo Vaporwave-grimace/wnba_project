@@ -455,6 +455,32 @@ check("digest scales to 2 qualifying picks across 2 games", {
   stopifnot(n == 2L)
 })
 
+check("digest message lists the higher-EV pick before the lower-EV pick", {
+  # Captures the actual message send_prop_digest() would post, via a
+  # test-local stub of send_discord() -- all real computation (SQL,
+  # projections, EV math) still runs unmocked, matching this project's
+  # no-mocking-framework convention; only the final Discord POST is
+  # intercepted so the test can inspect what would have been sent.
+  captured_msg <- NULL
+  original_send_discord <- send_discord
+  send_discord <<- function(message_text, creds, channel_id = "1499488823598387412") {
+    captured_msg <<- message_text
+    invisible(TRUE)
+  }
+  on.exit(send_discord <<- original_send_discord, add = TRUE)
+
+  n <- suppressWarnings(suppressMessages(
+    send_prop_digest(con9, fake_creds9, min_ev = 5.0, season = 2026L)
+  ))
+  stopifnot(n == 2L)
+  stopifnot(!is.null(captured_msg))
+
+  pos_steady <- regexpr("Steady Scorer", captured_msg)
+  pos_backup <- regexpr("Backup Scorer", captured_msg)
+  stopifnot(pos_steady > 0, pos_backup > 0)
+  stopifnot(pos_steady < pos_backup)   # Steady Scorer's higher EV must list first
+})
+
 dbDisconnect(con9)
 file.remove(tmp_db9)
 
