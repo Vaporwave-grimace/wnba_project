@@ -465,7 +465,7 @@ send_prop_digest <- function(con, creds, min_ev = 6.0,
   }, character(1))
 
   header <- sprintf("📋 **WNBA Daily Top Props** — %s (%d pick%s ≥%.0f%% EV)",
-                    format(with_tz(Sys.time(), "America/New_York"), "%I:%M %p ET"), length(picks),
+                    format(lubridate::with_tz(Sys.time(), "America/New_York"), "%I:%M %p ET"), length(picks),
                     if (length(picks) == 1) "" else "s", min_ev)
 
   msg <- paste(c(header, lines_out), collapse = "\n")
