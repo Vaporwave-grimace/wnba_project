@@ -289,6 +289,12 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
 
   bet_side_value <- if (market == "prop") .encode_prop_bet_side(stat, side, point, player_name) else play
 
+  # send_prop_digest() (player_props.R) calls this whole function with
+  # send_alerts = FALSE purely to read model_prob/ev_pct/play/fair_odds back
+  # out, relying on everything above this gate staying side-effect-free.
+  # Any future write/broadcast added above this line (not just inside it)
+  # would silently fire twice per pipeline cycle -- once per real alert,
+  # once per digest evaluation pass.
   if (send_alerts) {
   send_telegram(msg, creds)
   send_discord(msg, creds, channel_id = .BROADCAST_CHANNEL)
