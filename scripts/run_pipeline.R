@@ -63,7 +63,13 @@ safe_run(init_db(), "db init")
 
 # Open DB connection — shared across all steps this invocation
 con <- open_wnba_db()
-on.exit(dbDisconnect(con), add = TRUE)
+# on.exit() ties to the CURRENT FUNCTION's stack frame -- this script runs as
+# flat top-level code via `Rscript run_pipeline.R` (per this file's own header
+# comment), which has no enclosing function call, so on.exit() registered here
+# never fires. Harmless in practice (each invocation is a fresh short-lived
+# process; the OS reclaims the connection on exit regardless), but dead code
+# gives false confidence that cleanup happens. Explicit dbDisconnect() at the
+# true end of the script (below) does the real work instead.
 
 # ── Time Helpers ──────────────────────────────────────────────────────────────
 
@@ -778,3 +784,5 @@ if (!within_game_hours) {
 
 log_info("Pipeline run complete")
 log_info("──────────────────────────────────────────")
+
+dbDisconnect(con)
