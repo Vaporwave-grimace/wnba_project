@@ -484,6 +484,69 @@ check("digest message lists the higher-EV pick before the lower-EV pick", {
 dbDisconnect(con9)
 file.remove(tmp_db9)
 
+# ── Task 10: prop SD calibration scale is applied in emit_wnba_bet_alert() ────
+section("Task 10: .get_prop_sd_scale() applied to prop model_prob")
+
+tmp_db10 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db10)
+con10 <- open_wnba_db(tmp_db10)
+
+dbExecute(con10, "
+  INSERT INTO games (game_id, commence_time, home_team, away_team)
+  VALUES ('game10', '2026-06-10T23:00:00Z', 'Home Team', 'Rival Team')
+")
+dbExecute(con10, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game10', 'midday', 'Home Team', 'Rival Team', '2026-06-10T23:00:00Z')
+")
+dbExecute(con10, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game10', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
+     'Steady Scorer', 'Over', 120, 13.5, datetime('now'))
+")
+
+fake_creds10 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                     discord_bot_token = "x", discord_webhook_url = "x")
+
+check(".get_prop_sd_scale falls back to 1.0 with con = NULL", {
+  s <- .get_prop_sd_scale(NULL, "pts", 1.0)
+  stopifnot(abs(s - 1.0) < 1e-9)
+})
+check(".get_prop_sd_scale falls back to 1.0 when no model_config row exists", {
+  s <- .get_prop_sd_scale(con10, "pts", 1.0)
+  stopifnot(abs(s - 1.0) < 1e-9)
+})
+check("a stored scale of 2.0 changes model_prob vs. an unscaled baseline", {
+  res_unscaled <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game10", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con10, creds = fake_creds10,
+    player_name = "Steady Scorer", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+
+  dbExecute(con10, "
+    INSERT INTO model_config (param, value, updated_at)
+    VALUES ('wnba_prop_sd_scale_pts', 2.0, datetime('now'))
+  ")
+
+  res_scaled <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game10", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con10, creds = fake_creds10,
+    player_name = "Steady Scorer", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+
+  stopifnot(abs(res_unscaled$model_prob - res_scaled$model_prob) > 1e-6)
+})
+
+dbDisconnect(con10)
+file.remove(tmp_db10)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)

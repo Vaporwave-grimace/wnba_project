@@ -39,6 +39,19 @@ MIN_EV_PCT <- 3.0
   }, error = \(e) default)
 }
 
+# Reads a calibrated prop SD scale factor from model_config (written by
+# calibrate_prop_sd() in calibrate_props.R); falls back to 1.0 (no
+# correction) when con is NULL, unreachable, or no calibrated value exists
+# yet. Mirrors .get_wnba_sd() above.
+.get_prop_sd_scale <- function(con, stat, default = 1.0) {
+  if (is.null(con)) return(default)
+  tryCatch({
+    v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = ?",
+                    list(sprintf("wnba_prop_sd_scale_%s", stat)))$value[1]
+    if (is.null(v) || is.na(v)) default else v
+  }, error = \(e) default)
+}
+
 # Sanity backstop on model_prob — a totals/spread pnorm approximation should
 # never legitimately exceed this. Without it, an upstream input bug (e.g. an
 # uncapped or under-capped line adjustment) mechanically produces 90%+
@@ -222,10 +235,11 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     point <- bo$point
     play  <- sprintf("%s %s %.1f %s", player_name,
                      if (side == "over") "Over" else "Under", point, toupper(stat))
+    calibrated_sd <- sd * .get_prop_sd_scale(con, stat, 1.0)
     model_prob <- if (side == "over")
-      pnorm(point, mean = model_line, sd = sd, lower.tail = FALSE)
+      pnorm(point, mean = model_line, sd = calibrated_sd, lower.tail = FALSE)
     else
-      pnorm(point, mean = model_line, sd = sd, lower.tail = TRUE)
+      pnorm(point, mean = model_line, sd = calibrated_sd, lower.tail = TRUE)
   }
 
   model_prob <- min(model_prob, MODEL_PROB_CEILING)
