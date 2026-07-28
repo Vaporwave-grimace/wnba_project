@@ -111,3 +111,56 @@ compute_prop_sd_residuals <- function(con) {
       .groups       = "drop"
     )
 }
+
+# ── Calibration ───────────────────────────────────────────────────────────────
+
+#' Guardrailed upsert of wnba_prop_sd_scale_{pts,reb,ast,pra} to model_config.
+calibrate_prop_sd <- function(con, min_n = MIN_N_APPLY_PROP, max_delta = MAX_SD_SCALE_DELTA) {
+  residuals <- compute_prop_sd_residuals(con)
+  if (nrow(residuals) == 0) {
+    message("[calibrate] prop_sd: no player_box_scores rows yet")
+    return(invisible(FALSE))
+  }
+
+  applied <- FALSE
+  for (stat in c("pts", "reb", "ast", "pra")) {
+    row <- filter(residuals, stat == !!stat)
+    if (nrow(row) == 0) next
+
+    param   <- sprintf("wnba_prop_sd_scale_%s", stat)
+    default <- 1.0
+
+    if (row$n[1] < min_n) {
+      message(sprintf("[calibrate] prop_sd/%s: n=%d < min_n=%d -- skipping",
+                      stat, row$n[1], min_n))
+      next
+    }
+
+    current <- tryCatch({
+      v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = ?", list(param))$value[1]
+      if (is.null(v) || is.na(v)) default else v
+    }, error = \(e) default)
+
+    new_scale <- row$empirical_sd[1] / row$mean_raw_sd[1]
+    delta     <- new_scale - current
+    if (abs(delta) > max_delta) {
+      new_scale <- current + sign(delta) * max_delta
+      message(sprintf("[calibrate] prop_sd/%s: capping delta to %.2f -> %.3f",
+                      stat, max_delta, new_scale))
+    }
+
+    .set_config_param(
+      con, param, new_scale,
+      n_games = row$n[1],
+      notes = sprintf("empirical scale = empirical_sd/raw_window_sd, mean_residual=%.2f (bias check)",
+                      row$mean_residual[1])
+    )
+    applied <- TRUE
+  }
+  invisible(applied)
+}
+
+#' Morning orchestrator -- called from run_pipeline.R.
+calibrate_prop_sd_run <- function(con) {
+  calibrate_prop_sd(con)
+}
