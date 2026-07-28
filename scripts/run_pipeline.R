@@ -33,6 +33,7 @@ source(here("scripts", "shadow_model", "features.R"))
 source(here("scripts", "shadow_model", "predict.R"))
 source(here("scripts", "shadow_model", "mispricing.R"))
 source(here("scripts", "shadow_model", "calibrate_mispricing.R"))
+source(here("scripts", "shadow_model", "calibrate_props.R"))
 source(here("scripts", "rotowire_injuries.R"))
 source(here("scripts", "action_network.R"))
 source(here("scripts", "bet_alerts.R"))
@@ -190,6 +191,13 @@ if (hour_et() >= SETTLE_HOUR && !has_run_today("settle", con)) {
       "mispricing calibration"
     )
     mark_run_today("mispricing_calibration", con)
+  }
+
+  # Player-prop SD calibration -- empirical scale factor sweep + auto-apply
+  if (!has_run_today("prop_sd_calibration", con)) {
+    log_info("MORNING — running prop SD calibration")
+    safe_run(calibrate_prop_sd_run(con), "prop SD calibration")
+    mark_run_today("prop_sd_calibration", con)
   }
 }
 
