@@ -134,9 +134,15 @@ check("calibrate_prop_sd applies pts scale when n >= MIN_N_APPLY_PROP", {
   v <- dbGetQuery(con2, "SELECT value FROM model_config WHERE param = 'wnba_prop_sd_scale_pts'")$value
   stopifnot(length(v) == 1, !is.na(v))
 })
-check("reb/ast/pra are skipped (constant reb=4/ast=3 -> zero-SD guard -> no residual rows)", {
+check("reb/ast are skipped (constant reb=4/ast=3 -> zero-SD guard -> no residual rows)", {
   n_reb <- dbGetQuery(con2, "SELECT COUNT(*) AS n FROM model_config WHERE param = 'wnba_prop_sd_scale_reb'")$n
   stopifnot(n_reb == 0)
+  n_ast <- dbGetQuery(con2, "SELECT COUNT(*) AS n FROM model_config WHERE param = 'wnba_prop_sd_scale_ast'")$n
+  stopifnot(n_ast == 0)
+})
+check("pra is NOT skipped (pra=pts+reb+ast inherits pts variance, has real SD)", {
+  n_pra <- dbGetQuery(con2, "SELECT COUNT(*) AS n FROM model_config WHERE param = 'wnba_prop_sd_scale_pra'")$n
+  stopifnot(n_pra == 1)
 })
 check("calibrate_prop_sd skips when min_n is set above the available sample", {
   applied <- calibrate_prop_sd(con2, min_n = 100000L, max_delta = 1.0)
