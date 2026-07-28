@@ -394,12 +394,12 @@ dbExecute(con9, "
 dbExecute(con9, "
   INSERT INTO player_prop_lines
     (game_id, snapshot_type, market, home_team, away_team, bookmaker,
-     player_name, outcome_name, price, point, pulled_at)
+     player_name, outcome_name, price, point, commence_time, pulled_at)
   VALUES
     ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
-     'Steady Scorer', 'Over', 120, 7.5, datetime('now')),
+     'Steady Scorer', 'Over', 120, 7.5, datetime('now', '+2 hours'), datetime('now')),
     ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
-     'Steady Scorer', 'Under', -500, 7.5, datetime('now'))
+     'Steady Scorer', 'Under', -500, 7.5, datetime('now', '+2 hours'), datetime('now'))
 ")
 
 fake_creds9 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
@@ -433,19 +433,19 @@ check("min_ev above every real edge sends zero picks", {
 # Over 7.5 @ +120 edge (point is much closer to the projected mean here).
 seed_player_games(con9, "Backup Scorer", c(9,9, 8,10,9,10,9,11,8,9,10,8))
 dbExecute(con9, "
-  INSERT INTO games (game_id, home_team, away_team, commence_time) VALUES ('game9b', 'Some Team', 'Rival Team', '2026-06-10T23:00:00Z')
+  INSERT INTO games (game_id, home_team, away_team, commence_time) VALUES ('game9b', 'Some Team', 'Rival Team', datetime('now', '+2 hours'))
 ")
 dbExecute(con9, "
   INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
-  VALUES ('game9b', 'midday', 'Some Team', 'Rival Team', '2026-06-10T23:00:00Z')
+  VALUES ('game9b', 'midday', 'Some Team', 'Rival Team', datetime('now', '+2 hours'))
 ")
 dbExecute(con9, "
   INSERT INTO player_prop_lines
     (game_id, snapshot_type, market, home_team, away_team, bookmaker,
-     player_name, outcome_name, price, point, pulled_at)
+     player_name, outcome_name, price, point, commence_time, pulled_at)
   VALUES
     ('game9b', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
-     'Backup Scorer', 'Over', -110, 8.5, datetime('now'))
+     'Backup Scorer', 'Over', -110, 8.5, datetime('now', '+2 hours'), datetime('now'))
 ")
 
 check("digest scales to 2 qualifying picks across 2 games", {
