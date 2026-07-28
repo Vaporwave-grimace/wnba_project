@@ -25,10 +25,17 @@ MAX_SD_SCALE_DELTA  <- 0.25
 # ── Causal replay ─────────────────────────────────────────────────────────────
 
 # Mirrors compute_prop_projection()'s exact mean/SD/def-factor math, but
-# restricted to games strictly before as_of_date -- player_props.R's own
-# compute_prop_projection() has no cutoff param and always queries full
-# history, which would leak future games into a historical replay. Kept
-# as a private, calibration-only helper so the live function stays untouched.
+# with a stricter window guard: requires a FULL ROLLING_WINDOW_GAMES-game
+# prior history before returning a projection (vs the live function which
+# will happily project with as few as 2 games). This deliberate strengthening
+# prevents immature windows from polluting the residual calculation with
+# noise unrelated to genuine model bias. Consequence: compute_prop_sd_residuals()
+# will only draw from player-games with a full 10-game history; players with
+# fewer prior games are silently excluded from the calibration population,
+# even though the live model does project for them. Also restricted to games
+# strictly before as_of_date (no cutoff in live function, which would leak
+# future games into the replay). Kept as a private, calibration-only helper
+# so the live function stays untouched.
 .compute_prop_projection_asof <- function(player_name, stat, opponent, con, season, as_of_date) {
   stat <- tolower(stat)
   games <- dbGetQuery(con, "
