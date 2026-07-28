@@ -18,10 +18,26 @@ WNBA_EXPORTS_DIR <- here::here("exports")
 # Minimum EV% to fire an alert
 MIN_EV_PCT <- 3.0
 
-# Assumed scoring SDs for model_prob approximation via normal CDF.
-# Calibrate against calibration_report.rds once enough games accumulate.
+# Assumed scoring SDs for model_prob approximation via normal CDF. These are
+# now calibrated (2026-07-24, shadow_model/calibrate_mispricing.R's
+# calibrate_wnba_sd(), run every morning) from the empirical SD of
+# (model_line - actual) across settled clv_log positions, once enough data
+# existed to do that honestly (previously a guess — see .get_wnba_sd() below).
+# These module constants remain the fallback for when con is NULL or
+# model_config has no calibrated value yet.
 .WNBA_TOTAL_SD  <- 8.0
 .WNBA_SPREAD_SD <- 5.0
+
+# Reads a calibrated SD from model_config (written by calibrate_wnba_sd());
+# falls back to the module constant above when con is NULL, unreachable, or
+# no calibrated value exists yet. Mirrors mispricing.R's .get_dev_threshold().
+.get_wnba_sd <- function(con, param, default) {
+  if (is.null(con)) return(default)
+  tryCatch({
+    v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = ?", list(param))$value[1]
+    if (is.null(v) || is.na(v)) default else v
+  }, error = \(e) default)
+}
 
 # Sanity backstop on model_prob — a totals/spread pnorm approximation should
 # never legitimately exceed this. Without it, an upstream input bug (e.g. an
@@ -178,10 +194,11 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     bo    <- .best_book_odds(game_id, "totals", outcome_name, con)
     point <- if (!is.na(bo$point)) bo$point else mkt_line
     play  <- sprintf("%s %.1f", outcome_name, point)
+    total_sd <- .get_wnba_sd(con, "wnba_total_sd", .WNBA_TOTAL_SD)
     model_prob <- if (side == "over")
-      pnorm(point, mean = model_line, sd = .WNBA_TOTAL_SD, lower.tail = FALSE)
+      pnorm(point, mean = model_line, sd = total_sd, lower.tail = FALSE)
     else
-      pnorm(point, mean = model_line, sd = .WNBA_TOTAL_SD, lower.tail = TRUE)
+      pnorm(point, mean = model_line, sd = total_sd, lower.tail = TRUE)
 
   } else if (market == "spreads") {
     # spreads: outcome_name = team name; point = team's spread (neg = favored)
@@ -189,13 +206,14 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     bo    <- .best_book_odds(game_id, "spreads", outcome_name, con)
     point <- if (!is.na(bo$point)) bo$point else mkt_line
     play  <- sprintf("%s %+.1f", outcome_name, point)
+    spread_sd <- .get_wnba_sd(con, "wnba_spread_sd", .WNBA_SPREAD_SD)
     # Win condition: team covers its spread
     # home bet: actual_spread + point > 0  → P(actual_spread > -point)
     # away bet: -actual_spread + point > 0 → P(actual_spread < point)
     model_prob <- if (side == "home")
-      pnorm(-point, mean = model_line, sd = .WNBA_SPREAD_SD, lower.tail = FALSE)
+      pnorm(-point, mean = model_line, sd = spread_sd, lower.tail = FALSE)
     else
-      pnorm(point,  mean = model_line, sd = .WNBA_SPREAD_SD, lower.tail = TRUE)
+      pnorm(point,  mean = model_line, sd = spread_sd, lower.tail = TRUE)
 
   } else if (market == "prop") {
     stat_market  <- STAT_MARKET_MAP[[stat]]
@@ -307,14 +325,14 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
       on.exit(DBI::dbDisconnect(rcon), add = TRUE)
       DBI::dbExecute(rcon, "
         INSERT OR IGNORE INTO open_bets
-          (sport, pipeline, game_date, away_team, home_team,
+          (sport, pipeline, game_date, game_id, away_team, home_team,
            bet_side, odds, fair_odds, model_prob, ev_pct,
            game_time, status, fired_at, window, confidence, line_status,
            stake, kelly_fraction)
         VALUES
-          ('WNBA','WNBA',?,?,?,?,?,?,?,?,?,'OPEN',datetime('now'),?,?,'CONFIRMED',?,?)
+          ('WNBA','WNBA',?,?,?,?,?,?,?,?,?,?,'OPEN',datetime('now'),?,?,'CONFIRMED',?,?)
       ", list(
-        game_date, away_team, home_team,
+        game_date, game_id, away_team, home_team,
         bet_side_value,
         if (!is.na(bo$odds))    as.integer(bo$odds)    else NA,
         if (!is.na(fair_odds))  as.integer(fair_odds)  else NA,
