@@ -344,7 +344,11 @@ dbExecute(con8, "
      player_name, outcome_name, price, point, pulled_at)
   VALUES
     ('game8', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
-     'Steady Scorer', 'Over', 120, 7.5, datetime('now'))
+     'Steady Scorer', 'Over', 120, 7.5, datetime('now')),
+    ('game8', 'midday', 'player_points', 'Home Team', 'Rival Team', 'draftkings',
+     'Steady Scorer', 'Over', -105, 7.5, datetime('now')),
+    ('game8', 'midday', 'player_points', 'Home Team', 'Rival Team', 'fanduel',
+     'Steady Scorer', 'Over', -110, 7.5, datetime('now'))
 ")
 
 fake_creds8 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
@@ -406,8 +410,16 @@ dbExecute(con9, "
   VALUES
     ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
      'Steady Scorer', 'Over', 120, 7.5, datetime('now', '+2 hours'), datetime('now')),
+    ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'draftkings',
+     'Steady Scorer', 'Over', -105, 7.5, datetime('now', '+2 hours'), datetime('now')),
+    ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'fanduel',
+     'Steady Scorer', 'Over', -110, 7.5, datetime('now', '+2 hours'), datetime('now')),
     ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
-     'Steady Scorer', 'Under', -500, 7.5, datetime('now', '+2 hours'), datetime('now'))
+     'Steady Scorer', 'Under', -500, 7.5, datetime('now', '+2 hours'), datetime('now')),
+    ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'draftkings',
+     'Steady Scorer', 'Under', -450, 7.5, datetime('now', '+2 hours'), datetime('now')),
+    ('game9', 'midday', 'player_points', 'Some Team', 'Rival Team', 'fanduel',
+     'Steady Scorer', 'Under', -480, 7.5, datetime('now', '+2 hours'), datetime('now'))
 ")
 
 fake_creds9 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
@@ -453,7 +465,11 @@ dbExecute(con9, "
      player_name, outcome_name, price, point, commence_time, pulled_at)
   VALUES
     ('game9b', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
-     'Backup Scorer', 'Over', -110, 8.5, datetime('now', '+2 hours'), datetime('now'))
+     'Backup Scorer', 'Over', -110, 8.5, datetime('now', '+2 hours'), datetime('now')),
+    ('game9b', 'midday', 'player_points', 'Some Team', 'Rival Team', 'draftkings',
+     'Backup Scorer', 'Over', -105, 8.5, datetime('now', '+2 hours'), datetime('now')),
+    ('game9b', 'midday', 'player_points', 'Some Team', 'Rival Team', 'fanduel',
+     'Backup Scorer', 'Over', -108, 8.5, datetime('now', '+2 hours'), datetime('now'))
 ")
 
 check("digest scales to 2 qualifying picks across 2 games", {
@@ -513,7 +529,11 @@ dbExecute(con10, "
      player_name, outcome_name, price, point, pulled_at)
   VALUES
     ('game10', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
-     'Steady Scorer', 'Over', 120, 13.5, datetime('now'))
+     'Steady Scorer', 'Over', 120, 13.5, datetime('now')),
+    ('game10', 'midday', 'player_points', 'Home Team', 'Rival Team', 'draftkings',
+     'Steady Scorer', 'Over', -105, 13.5, datetime('now')),
+    ('game10', 'midday', 'player_points', 'Home Team', 'Rival Team', 'fanduel',
+     'Steady Scorer', 'Over', -110, 13.5, datetime('now'))
 ")
 
 fake_creds10 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
@@ -554,6 +574,91 @@ check("a stored scale of 2.0 changes model_prob vs. an unscaled baseline", {
 
 dbDisconnect(con10)
 file.remove(tmp_db10)
+
+# ── Task 11: devig / consensus-line / book-depth helpers ─────────────────────
+section("Task 11: .devig_prop_prob() / .get_prop_config() / .best_prop_odds()")
+
+check(".devig_prop_prob(-115, -115) returns exactly 0.5 (symmetric vig removed)", {
+  p <- .devig_prop_prob(-115, -115)
+  stopifnot(abs(p - 0.5) < 1e-9)
+})
+check(".devig_prop_prob falls back to raw implied prob when odds_other is NA", {
+  p <- .devig_prop_prob(-115, NA_real_)
+  stopifnot(abs(p - .american_to_prob(-115)) < 1e-9)
+})
+check(".get_prop_config falls back to module constants with con = NULL", {
+  cfg <- .get_prop_config(NULL)
+  stopifnot(cfg$min_books == PROP_MIN_BOOKS, abs(cfg$main_line_tol - PROP_MAIN_LINE_TOL) < 1e-9)
+})
+
+tmp_db11 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db11)
+con11 <- open_wnba_db(tmp_db11)
+
+check(".get_prop_config reads seeded model_config values", {
+  cfg <- .get_prop_config(con11)
+  stopifnot(cfg$min_books == 3L, abs(cfg$main_line_tol - 1.5) < 1e-9)
+})
+
+# 3 books at the consensus point (14.5) + 1 alt-line book (8.5) for the same
+# player/market/side -- the alt-line book must be filtered out by the
+# consensus-point check, not just outvoted by preference ranking.
+dbExecute(con11, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game11', 'midday', 'player_rebounds', 'Home Team', 'Away Team', 'pinnacle',
+     'Test Player', 'Under', -110, 14.5, datetime('now')),
+    ('game11', 'midday', 'player_rebounds', 'Home Team', 'Away Team', 'draftkings',
+     'Test Player', 'Under', -105, 14.5, datetime('now')),
+    ('game11', 'midday', 'player_rebounds', 'Home Team', 'Away Team', 'fanduel',
+     'Test Player', 'Under', -108, 14.5, datetime('now')),
+    ('game11', 'midday', 'player_rebounds', 'Home Team', 'Away Team', 'betmgm',
+     'Test Player', 'Under', 250, 8.5, datetime('now')),
+    ('game11', 'midday', 'player_rebounds', 'Home Team', 'Away Team', 'pinnacle',
+     'Test Player', 'Over', -108, 14.5, datetime('now')),
+    ('game11', 'midday', 'player_rebounds', 'Home Team', 'Away Team', 'draftkings',
+     'Test Player', 'Over', -102, 14.5, datetime('now'))
+")
+
+check("consensus-point filter excludes the alt-line book from book_count", {
+  bo <- .best_prop_odds('game11', 'player_rebounds', 'Test Player', 'Under', con11)
+  stopifnot(bo$book_count == 3L)
+  stopifnot(abs(bo$point - 14.5) < 1e-9)
+})
+check("odds_other reflects the opposite side's best-ranked price at the consensus point", {
+  # 'Over' rows: pinnacle -108, draftkings -102, both at 14.5. pinnacle ranks
+  # first in BOOK_PREF, so odds_other must be pinnacle's -108, not draftkings'
+  # -102 -- proves real selection, not just presence.
+  bo <- .best_prop_odds('game11', 'player_rebounds', 'Test Player', 'Under', con11)
+  stopifnot(!is.na(bo$odds_other))
+  stopifnot(bo$odds_other == -108L)
+})
+# Only 2 books for this player/side -- below the default min_books (3). Also
+# no opposite-side ('Under') rows at all for this player/market.
+dbExecute(con11, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game11b', 'midday', 'player_assists', 'Home Team', 'Away Team', 'pinnacle',
+     'Thin Player', 'Over', -110, 5.5, datetime('now')),
+    ('game11b', 'midday', 'player_assists', 'Home Team', 'Away Team', 'draftkings',
+     'Thin Player', 'Over', -105, 5.5, datetime('now'))
+")
+check("book_count below min_books returns NA book/odds/point (caller must gate)", {
+  bo <- .best_prop_odds('game11b', 'player_assists', 'Thin Player', 'Over', con11)
+  stopifnot(bo$book_count == 2L)
+  stopifnot(is.na(bo$odds), is.na(bo$point))
+})
+check("odds_other is NA when no opposite-side rows exist at all", {
+  bo <- .best_prop_odds('game11b', 'player_assists', 'Thin Player', 'Over', con11)
+  stopifnot(is.na(bo$odds_other))
+})
+
+dbDisconnect(con11)
+file.remove(tmp_db11)
 
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))

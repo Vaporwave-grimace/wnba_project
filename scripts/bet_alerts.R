@@ -52,6 +52,21 @@ MIN_EV_PCT <- 3.0
   }, error = \(e) default)
 }
 
+# Reads prop_min_books/prop_main_line_tol from model_config with module-constant
+# fallbacks, same pattern as .get_wnba_sd().
+.get_prop_config <- function(con) {
+  list(
+    min_books = tryCatch({
+      v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'prop_min_books'")$value[1]
+      if (is.null(v) || is.na(v)) PROP_MIN_BOOKS else as.integer(v)
+    }, error = \(e) PROP_MIN_BOOKS),
+    main_line_tol = tryCatch({
+      v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'prop_main_line_tol'")$value[1]
+      if (is.null(v) || is.na(v)) PROP_MAIN_LINE_TOL else as.numeric(v)
+    }, error = \(e) PROP_MAIN_LINE_TOL)
+  )
+}
+
 # Sanity backstop on model_prob — a totals/spread pnorm approximation should
 # never legitimately exceed this. Without it, an upstream input bug (e.g. an
 # uncapped or under-capped line adjustment) mechanically produces 90%+
@@ -69,6 +84,18 @@ MODEL_PROB_CEILING <- 0.80
 # fraction of bankroll, so the equivalent guardrail is a fraction cap.
 KELLY_STAKE_CEILING <- 0.10
 
+# Minimum number of distinct books that must post a prop line (on the
+# requested side, at the consensus point) before we'll evaluate it. Seeded
+# in model_config as prop_min_books; this module constant is the fallback
+# when con is unavailable. Mirrors the steam_min_books pattern.
+PROP_MIN_BOOKS <- 3L
+
+# Maximum deviation from the median point across books before a row is
+# treated as an alt line and discarded. Half-point line moves shift by 0.5,
+# so 1.5 covers normal market drift without catching true alt lines. Seeded
+# in model_config as prop_main_line_tol.
+PROP_MAIN_LINE_TOL <- 1.5
+
 # Discord channel: #auto-bet-broadcast
 .BROADCAST_CHANNEL <- "1499488823598387412"
 
@@ -83,6 +110,20 @@ KELLY_STAKE_CEILING <- 0.10
   if (is.na(p) || p <= 0 || p >= 1) return(NA_integer_)
   if (p >= 0.5) as.integer(round(-p / (1 - p) * 100))
   else          as.integer(round((1 - p) / p * 100))
+}
+
+# Two-outcome multiplicative devig: scales each side's raw implied prob by
+# their sum so they sum to 1.0, removing the book's vig. Returns the fair
+# probability for odds_side. Falls back to raw implied prob if odds_other is
+# NA -- callers should treat that as illiquid/one-sided and use the result
+# accordingly (it is not itself a skip signal).
+.devig_prop_prob <- function(odds_side, odds_other) {
+  p1 <- .american_to_prob(odds_side)
+  if (is.na(odds_other)) return(p1)
+  p2    <- .american_to_prob(odds_other)
+  total <- p1 + p2
+  if (is.na(total) || total <= 0) return(p1)
+  p1 / total
 }
 
 # Encodes a prop bet's identity into bet_side for open_bets' natural-key
@@ -138,34 +179,85 @@ KELLY_STAKE_CEILING <- 0.10
        point = rows$point[1])
 }
 
-# Same book-preference logic as .best_book_odds(), against
-# player_prop_lines instead of lines (different table, different schema
-# -- player_name is part of the key).
-.best_prop_odds <- function(game_id, market, player_name, outcome_name, con) {
-  BOOK_PREF <- c("pinnacle", "betonlineag", "lowvig", "draftkings", "fanduel")
+# Best available line for a prop (player + market + outcome_name), from the
+# most recent snapshot for the game.
+#
+# Returns list(book, odds, point, odds_other, book_count).
+#   odds_other  -- best-ranked opposite-side price at the consensus point (NA if missing)
+#   book_count  -- distinct books posting the requested side at the consensus point
+#
+# Returns book_count = 0 (and NA for everything else) when:
+#   - no rows exist, or
+#   - all rows are filtered as alt lines, or
+#   - book_count < min_books (caller gates on this)
+.best_prop_odds <- function(game_id, market, player_name, outcome_name, con,
+                             min_books = PROP_MIN_BOOKS,
+                             main_line_tol = PROP_MAIN_LINE_TOL) {
+  BOOK_PREF  <- c("pinnacle", "betonlineag", "lowvig", "draftkings", "fanduel")
+  other_name <- if (outcome_name == "Over") "Under" else "Over"
+  empty      <- list(book = NA_character_, odds = NA_integer_, point = NA_real_,
+                     odds_other = NA_integer_, book_count = 0L)
+
   rows <- tryCatch(
     dbGetQuery(con, "
-      SELECT bookmaker, price, point
+      SELECT bookmaker, outcome_name, price, point
       FROM player_prop_lines
-      WHERE game_id      = ?
-        AND market       = ?
-        AND player_name  = ?
-        AND outcome_name = ?
+      WHERE game_id       = ?
+        AND market        = ?
+        AND player_name   = ?
+        AND outcome_name  IN (?, ?)
         AND snapshot_type = (
           SELECT snapshot_type FROM player_prop_lines
           WHERE game_id = ? AND player_name = ? AND market = ?
           ORDER BY pulled_at DESC LIMIT 1
         )
-    ", list(game_id, market, player_name, outcome_name, game_id, player_name, market)),
+    ", list(game_id, market, player_name,
+            outcome_name, other_name,
+            game_id, player_name, market)),
     error = function(e) data.frame()
   )
-  if (nrow(rows) == 0)
-    return(list(book = NA_character_, odds = NA_integer_, point = NA_real_))
-  rows$rank <- match(tolower(rows$bookmaker), BOOK_PREF, nomatch = 99L)
-  rows <- rows[order(rows$rank), ]
-  list(book  = rows$bookmaker[1],
-       odds  = as.integer(round(rows$price[1])),
-       point = rows$point[1])
+  if (nrow(rows) == 0) return(empty)
+
+  # ── Consensus point filter ─────────────────────────────────────────────────
+  # Compute median point per outcome_name across all books, then discard rows
+  # outside main_line_tol of that median. This drops alt lines (e.g. an Under
+  # 8.5 when every other book has Under 14.5) without any per-stat hardcoding.
+  rows <- rows |>
+    dplyr::group_by(outcome_name) |>
+    dplyr::mutate(median_pt = median(point, na.rm = TRUE)) |>
+    dplyr::filter(abs(point - median_pt) <= main_line_tol) |>
+    dplyr::ungroup()
+
+  if (nrow(rows) == 0) return(empty)
+
+  side_rows  <- rows[rows$outcome_name == outcome_name, ]
+  other_rows <- rows[rows$outcome_name == other_name,   ]
+
+  if (nrow(side_rows) == 0) return(empty)
+
+  # ── Book depth gate ─────────────────────────────────────────────────────────
+  book_count <- length(unique(side_rows$bookmaker))
+  if (book_count < min_books) {
+    return(modifyList(empty, list(book_count = book_count)))
+  }
+
+  # ── Book preference ranking ──────────────────────────────────────────────────
+  side_rows$rank  <- match(tolower(side_rows$bookmaker),  BOOK_PREF, nomatch = 99L)
+  side_rows       <- side_rows[order(side_rows$rank), ]
+
+  other_odds <- if (nrow(other_rows) > 0) {
+    other_rows$rank <- match(tolower(other_rows$bookmaker), BOOK_PREF, nomatch = 99L)
+    other_rows      <- other_rows[order(other_rows$rank), ]
+    as.integer(round(other_rows$price[1]))
+  } else NA_integer_
+
+  list(
+    book       = side_rows$bookmaker[1],
+    odds       = as.integer(round(side_rows$price[1])),
+    point      = side_rows$point[1],
+    odds_other = other_odds,
+    book_count = book_count
+  )
 }
 
 # Game metadata: home_team, away_team, commence_time
