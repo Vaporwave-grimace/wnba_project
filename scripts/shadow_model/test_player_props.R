@@ -53,6 +53,14 @@ check("team_def_factors table exists", {
 check("odds_api_quota_log table exists", {
   stopifnot("odds_api_quota_log" %in% dbListTables(con))
 })
+check("prop_min_books seeded in model_config with default 3", {
+  v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'prop_min_books'")$value
+  stopifnot(length(v) == 1, abs(v - 3) < 1e-9)
+})
+check("prop_main_line_tol seeded in model_config with default 1.5", {
+  v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = 'prop_main_line_tol'")$value
+  stopifnot(length(v) == 1, abs(v - 1.5) < 1e-9)
+})
 check("init_db is safe to re-run (idempotent)", {
   init_db(tmp_db)   # must not error on second call
   TRUE

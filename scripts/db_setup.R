@@ -271,7 +271,9 @@ init_db <- function(path = DB_PATH) {
     list("injury_impact_doubtful", -2.0, "initial seed"),
     list("injury_impact_gtd",   -1.0,  "initial seed — GTD/Questionable impact"),
     list("steam_min_move",  0.5, "initial seed — matches STEAM_MIN_MOVE default in odds_ingest.R"),
-    list("steam_min_books", 2,   "initial seed — matches STEAM_MIN_BOOKS default in odds_ingest.R")
+    list("steam_min_books", 2,   "initial seed — matches STEAM_MIN_BOOKS default in odds_ingest.R"),
+    list("prop_min_books",      3,   "initial seed — matches PROP_MIN_BOOKS default in bet_alerts.R"),
+    list("prop_main_line_tol",  1.5, "initial seed — matches PROP_MAIN_LINE_TOL default in bet_alerts.R")
   )
   for (d in defaults) {
     dbExecute(con,
