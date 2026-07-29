@@ -660,6 +660,50 @@ check("odds_other is NA when no opposite-side rows exist at all", {
 dbDisconnect(con11)
 file.remove(tmp_db11)
 
+# ── Task 12: book-depth gate fires through the full emitter ──────────────────
+section("Task 12: emit_wnba_bet_alert() prop book-depth gate")
+
+tmp_db12 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db12)
+con12 <- open_wnba_db(tmp_db12)
+
+dbExecute(con12, "
+  INSERT INTO games (game_id, commence_time, home_team, away_team)
+  VALUES ('game12', '2026-06-10T23:00:00Z', 'Home Team', 'Rival Team')
+")
+dbExecute(con12, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game12', 'midday', 'Home Team', 'Rival Team', '2026-06-10T23:00:00Z')
+")
+# Only 1 book -- below the default min_books (3).
+dbExecute(con12, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game12', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
+     'Thin Coverage Player', 'Over', 120, 7.5, datetime('now'))
+")
+
+fake_creds12 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                     discord_bot_token = "x", discord_webhook_url = "x")
+
+check("book-depth gate returns NA model_prob / NULL play / fired=FALSE for a thin market", {
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game12", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con12, creds = fake_creds12,
+    player_name = "Thin Coverage Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  stopifnot(is.na(res$model_prob))
+  stopifnot(is.null(res$play))
+  stopifnot(isFALSE(res$fired))
+})
+
+dbDisconnect(con12)
+file.remove(tmp_db12)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)

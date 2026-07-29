@@ -323,7 +323,21 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
   } else if (market == "prop") {
     stat_market  <- STAT_MARKET_MAP[[stat]]
     outcome_name <- if (side == "over") "Over" else "Under"
-    bo    <- .best_prop_odds(game_id, stat_market, player_name, outcome_name, con)
+    cfg <- .get_prop_config(con)
+    bo  <- .best_prop_odds(game_id, stat_market, player_name, outcome_name, con,
+                            min_books     = cfg$min_books,
+                            main_line_tol = cfg$main_line_tol)
+
+    # Book depth / alt-line gate -- skip before any pnorm() call
+    if (bo$book_count < cfg$min_books) {
+      message(sprintf(
+        "[bet_alerts/WNBA] %s %s %s -- %d book(s) at consensus point (min=%d), skipping",
+        player_name, stat, side, bo$book_count, cfg$min_books
+      ))
+      return(invisible(list(message = NULL, model_prob = NA_real_, ev_pct = NA_real_,
+                            kelly = 0, fired = FALSE, play = NULL, fair_odds = NA_real_)))
+    }
+
     point <- bo$point
     play  <- sprintf("%s %s %.1f %s", player_name,
                      if (side == "over") "Over" else "Under", point, toupper(stat))
@@ -345,8 +359,16 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
 
   # ── EV filter ────────────────────────────────────────────────────────────────
 
-  implied_prob  <- .american_to_prob(bo$odds)
-  ev_pct        <- (model_prob - implied_prob) / implied_prob * 100
+  # Props: devig both sides so implied_prob reflects the fair share, not the
+  # vigged raw price. A -115/-115 line has 53.5% raw implied prob per side but
+  # 50% fair prob -- using the raw price overstates every edge by ~3-4pp.
+  # Totals/spreads use Pinnacle consensus (~1% hold), close enough that raw
+  # implied prob is acceptable there.
+  implied_prob <- if (market == "prop")
+    .devig_prop_prob(bo$odds, bo$odds_other)
+  else
+    .american_to_prob(bo$odds)
+  ev_pct <- (model_prob - implied_prob) / implied_prob * 100
   fair_odds     <- .prob_to_american(model_prob)
   kelly         <- min(.kelly_fraction(model_prob, bo$odds), KELLY_STAKE_CEILING)
 
