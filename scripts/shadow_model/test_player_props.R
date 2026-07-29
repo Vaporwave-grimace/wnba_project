@@ -704,6 +704,130 @@ check("book-depth gate returns NA model_prob / NULL play / fired=FALSE for a thi
 dbDisconnect(con12)
 file.remove(tmp_db12)
 
+# ── Task 3 fix: model_config override of prop_min_books ──────────────────────
+section("Task 3 fix: model_config override of prop_min_books actually changes gate behavior")
+
+tmp_db13 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db13)
+con13 <- open_wnba_db(tmp_db13)
+
+dbExecute(con13, "
+  INSERT INTO games (game_id, commence_time, home_team, away_team)
+  VALUES ('game13', '2026-06-10T23:00:00Z', 'Home Team', 'Rival Team')
+")
+dbExecute(con13, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game13', 'midday', 'Home Team', 'Rival Team', '2026-06-10T23:00:00Z')
+")
+# Only 2 books -- below the seeded default prop_min_books (3).
+dbExecute(con13, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game13', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
+     'Config Override Player', 'Over', -110, 7.5, datetime('now')),
+    ('game13', 'midday', 'player_points', 'Home Team', 'Rival Team', 'draftkings',
+     'Config Override Player', 'Over', -105, 7.5, datetime('now'))
+")
+
+fake_creds13 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                     discord_bot_token = "x", discord_webhook_url = "x")
+
+check("2-book fixture is gated under the default prop_min_books=3", {
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game13", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con13, creds = fake_creds13,
+    player_name = "Config Override Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  stopifnot(is.na(res$model_prob))
+  stopifnot(is.null(res$play))
+})
+
+check("lowering prop_min_books to 2 via model_config lets the same fixture through the gate", {
+  dbExecute(con13, "UPDATE model_config SET value = 2 WHERE param = 'prop_min_books'")
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game13", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con13, creds = fake_creds13,
+    player_name = "Config Override Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  stopifnot(!is.na(res$model_prob))
+  stopifnot(!is.null(res$play))
+})
+
+dbDisconnect(con13)
+file.remove(tmp_db13)
+
+# ── Task 3 fix: devig changes ev_pct for a real fired prop alert ─────────────
+section("Task 3 fix: devig changes ev_pct for a real fired prop alert")
+
+tmp_db14 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db14)
+con14 <- open_wnba_db(tmp_db14)
+
+dbExecute(con14, "
+  INSERT INTO games (game_id, commence_time, home_team, away_team)
+  VALUES ('game14', '2026-06-10T23:00:00Z', 'Home Team', 'Rival Team')
+")
+dbExecute(con14, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game14', 'midday', 'Home Team', 'Rival Team', '2026-06-10T23:00:00Z')
+")
+# 3 books each side, symmetric -110/-110 pinnacle prices (real vig) so raw
+# implied prob (~0.5238) and devigged implied prob (exactly 0.5) are clearly
+# different, provable numbers -- not just "some difference".
+dbExecute(con14, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game14', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
+     'Devig Test Player', 'Over', -110, 10, datetime('now')),
+    ('game14', 'midday', 'player_points', 'Home Team', 'Rival Team', 'draftkings',
+     'Devig Test Player', 'Over', -108, 10, datetime('now')),
+    ('game14', 'midday', 'player_points', 'Home Team', 'Rival Team', 'fanduel',
+     'Devig Test Player', 'Over', -105, 10, datetime('now')),
+    ('game14', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
+     'Devig Test Player', 'Under', -110, 10, datetime('now')),
+    ('game14', 'midday', 'player_points', 'Home Team', 'Rival Team', 'draftkings',
+     'Devig Test Player', 'Under', -108, 10, datetime('now')),
+    ('game14', 'midday', 'player_points', 'Home Team', 'Rival Team', 'fanduel',
+     'Devig Test Player', 'Under', -105, 10, datetime('now'))
+")
+
+fake_creds14 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                     discord_bot_token = "x", discord_webhook_url = "x")
+
+check("devig produces a different ev_pct than the raw (vigged) calculation would", {
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game14", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con14, creds = fake_creds14,
+    player_name = "Devig Test Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  stopifnot(!is.na(res$ev_pct))
+
+  # pinnacle wins book preference on both sides -> odds=-110, odds_other=-110
+  raw_implied    <- .american_to_prob(-110)
+  devig_implied  <- .devig_prop_prob(-110, -110)
+  stopifnot(abs(devig_implied - 0.5) < 1e-9)      # symmetric -110/-110 devigs to exactly 0.5
+  stopifnot(abs(raw_implied - devig_implied) > 0.01)  # genuinely different inputs
+
+  raw_ev_pct   <- (res$model_prob - raw_implied)   / raw_implied   * 100
+  devig_ev_pct <- (res$model_prob - devig_implied) / devig_implied * 100
+
+  stopifnot(abs(res$ev_pct - devig_ev_pct) < 1e-6)  # actual result matches the DEVIGGED formula
+  stopifnot(abs(res$ev_pct - raw_ev_pct) > 1)       # and is NOT the raw (vigged) formula's value
+})
+
+dbDisconnect(con14)
+file.remove(tmp_db14)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)
