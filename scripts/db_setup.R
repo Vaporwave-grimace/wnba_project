@@ -302,6 +302,27 @@ init_db <- function(path = DB_PATH) {
     )
   ")
 
+  # Idempotent migrations: card-display fields for the Base44 WNBA prop sync
+  # (team/opponent abbreviations, position, home/away, usage-rate inputs) --
+  # sourced from wehoop::load_wnba_player_box(), which already returns these,
+  # just not previously captured by sync_player_box_scores().
+  pbs_cols <- dbListFields(con, "player_box_scores")
+  pbs_new_cols <- list(
+    team_abbr          = "TEXT",
+    opponent_abbr      = "TEXT",
+    position           = "TEXT",
+    home_away          = "TEXT",
+    fga                = "INTEGER",
+    fta                = "INTEGER",
+    tov                = "INTEGER"
+  )
+  for (col in names(pbs_new_cols)) {
+    if (!col %in% pbs_cols) {
+      dbExecute(con, sprintf("ALTER TABLE player_box_scores ADD COLUMN %s %s", col, pbs_new_cols[[col]]))
+      message("[db_setup] Migrated player_box_scores: added ", col, " column")
+    }
+  }
+
   # Player prop odds snapshots -- mirrors `lines` but keyed per-player.
   # market: player_points | player_rebounds | player_assists |
   #         player_points_rebounds_assists
