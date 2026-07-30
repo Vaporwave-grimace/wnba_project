@@ -47,15 +47,22 @@ sync_player_box_scores <- function(con, season = as.integer(format(Sys.Date(), "
 
   rows <- pb |>
     dplyr::transmute(
-      game_id     = as.character(game_id),
-      game_date   = as.character(game_date),
-      player_name = athlete_display_name,
-      team        = team_display_name,
-      opponent    = opponent_team_display_name,
-      min         = suppressWarnings(as.numeric(minutes)),
-      pts         = as.integer(points),
-      reb         = as.integer(rebounds),
-      ast         = as.integer(assists)
+      game_id       = as.character(game_id),
+      game_date     = as.character(game_date),
+      player_name   = athlete_display_name,
+      team          = team_display_name,
+      opponent      = opponent_team_display_name,
+      min           = suppressWarnings(as.numeric(minutes)),
+      pts           = as.integer(points),
+      reb           = as.integer(rebounds),
+      ast           = as.integer(assists),
+      team_abbr     = team_abbreviation,
+      opponent_abbr = opponent_team_abbreviation,
+      position      = athlete_position_abbreviation,
+      home_away     = home_away,
+      fga           = as.integer(field_goals_attempted),
+      fta           = as.integer(free_throws_attempted),
+      tov           = as.integer(turnovers)
     ) |>
     dplyr::filter(!is.na(player_name), !is.na(game_id))
 
@@ -66,10 +73,13 @@ sync_player_box_scores <- function(con, season = as.integer(format(Sys.Date(), "
       r <- rows[i, ]
       n_written <- n_written + dbExecute(con, "
         INSERT OR IGNORE INTO player_box_scores
-          (game_id, game_date, player_name, team, opponent, min, pts, reb, ast)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (game_id, game_date, player_name, team, opponent, min, pts, reb, ast,
+           team_abbr, opponent_abbr, position, home_away, fga, fta, tov)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ", list(r$game_id, r$game_date, r$player_name, r$team, r$opponent,
-              r$min, r$pts, r$reb, r$ast))
+              r$min, r$pts, r$reb, r$ast,
+              r$team_abbr, r$opponent_abbr, r$position, r$home_away,
+              r$fga, r$fta, r$tov))
     }
     dbCommit(con)
   }, error = function(e) {
@@ -300,6 +310,23 @@ fetch_player_prop_odds <- function(con, game_ids, snapshot_type = "midday") {
 # compute a projection and evaluate both Over and Under. emit_wnba_bet_alert()
 # handles the EV filter and Kelly sizing -- this function's job is just to
 # figure out each player's opponent and hand off model_line/sd.
+#
+# `datetime(commence_time) > datetime('now')` guards against stale candidates
+# (both sides wrapped in datetime() to normalize commence_time's ISO8601
+# "T...Z" format against datetime('now')'s space-separated one -- raw string
+# comparison between the two looks right for cross-day cases but silently
+# breaks for same-day ones, e.g. a game that already tipped off 8 hours ago
+# today still compares as "future" because 'T' > ' ' lexicographically at
+# that character position, regardless of the actual clock time on either
+# side). Rows never get deleted from player_prop_lines, so without this a completed
+# game's old book line gets compared against today's *updated* rolling
+# average, producing fake "edges" that are pure staleness artifacts (not a
+# real mispricing). Previously this was only prevented by run_pipeline.R's
+# caller-side today_game_ids/near_tip_games gating, not by this function
+# itself -- confirmed live 2026-07-25: a direct manual call to the sibling
+# function send_prop_digest() (same unfiltered query, bypassing that outer
+# gate) evaluated 20 games back to 07-13 and produced 370 fake "edges."
+# Added here so both callers are safe even if invoked directly.
 detect_prop_edges <- function(con, creds, send_alerts = TRUE,
                               season = as.integer(format(Sys.Date(), "%Y"))) {
   candidates <- dbGetQuery(con, "
@@ -311,6 +338,7 @@ detect_prop_edges <- function(con, creds, send_alerts = TRUE,
       WHERE ppl2.game_id = ppl.game_id
       ORDER BY pulled_at DESC LIMIT 1
     )
+    AND datetime(ppl.commence_time) > datetime('now')
   ")
 
   if (nrow(candidates) == 0) {
@@ -386,6 +414,9 @@ detect_prop_edges <- function(con, creds, send_alerts = TRUE,
 # instead, which bet_router's parser does not match.
 send_prop_digest <- function(con, creds, min_ev = 6.0,
                              season = as.integer(format(Sys.Date(), "%Y"))) {
+  # commence_time filter -- see the matching comment on detect_prop_edges()'s
+  # identical query above; this sibling had the same gap and is what actually
+  # produced the 370-fake-pick incident (2026-07-25) when called directly.
   candidates <- dbGetQuery(con, "
     SELECT DISTINCT ppl.game_id, ppl.player_name, ppl.market,
            ppl.home_team, ppl.away_team
@@ -395,6 +426,7 @@ send_prop_digest <- function(con, creds, min_ev = 6.0,
       WHERE ppl2.game_id = ppl.game_id
       ORDER BY pulled_at DESC LIMIT 1
     )
+    AND datetime(ppl.commence_time) > datetime('now')
   ")
 
   if (nrow(candidates) == 0) {
