@@ -363,7 +363,11 @@ detect_prop_edges <- function(con, creds, send_alerts = TRUE,
     return(invisible(0L))
   }
 
-  n_fired <- 0L
+  # ── Pass 1: dry-run every candidate/side, never firing ──────────────────────
+  # Reuses emit_wnba_bet_alert()'s send_alerts=FALSE side-effect-free contract
+  # (the same one send_prop_digest() already depends on) so this pass can
+  # never write to open_bets/BET_HISTORY or post to Discord/Telegram.
+  evaluated <- list()
   for (i in seq_len(nrow(candidates))) {
     row  <- candidates[i, ]
     stat <- names(STAT_MARKET_MAP)[STAT_MARKET_MAP == row$market]
@@ -398,16 +402,62 @@ detect_prop_edges <- function(con, creds, send_alerts = TRUE,
           player_name = row$player_name,
           stat        = stat,
           sd          = proj$baseline_sd,
-          send_alerts = send_alerts
+          send_alerts = FALSE
         ),
         error = function(e) {
-          message("[player_props] alert error for ", row$player_name, " ", stat, " ", side,
+          message("[player_props] dry-run error for ", row$player_name, " ", stat, " ", side,
                   ": ", e$message)
           NULL
         }
       )
-      if (!is.null(res) && isTRUE(res$fired)) n_fired <- n_fired + 1L
+      if (is.null(res) || is.null(res$play) || is.na(res$ev_pct)) next
+
+      evaluated[[length(evaluated) + 1]] <- data.frame(
+        game_id     = row$game_id,
+        player_name = row$player_name,
+        stat        = stat,
+        side        = side,
+        ev_pct      = res$ev_pct,
+        model_line  = proj$projected_mean,
+        sd          = proj$baseline_sd,
+        stringsAsFactors = FALSE
+      )
     }
+  }
+
+  if (length(evaluated) == 0) {
+    message("[player_props] detect_prop_edges: no candidates cleared EV threshold.")
+    return(invisible(0L))
+  }
+
+  # ── Pass 2: collapse correlated same-player/game/side picks ─────────────────
+  winners <- .collapse_correlated_prop_edges(dplyr::bind_rows(evaluated))
+
+  # ── Pass 3: real-fire only the winners ──────────────────────────────────────
+  n_fired <- 0L
+  for (i in seq_len(nrow(winners))) {
+    w <- winners[i, ]
+    res <- tryCatch(
+      emit_wnba_bet_alert(
+        game_id     = w$game_id,
+        market      = "prop",
+        side        = w$side,
+        model_line  = w$model_line,
+        mkt_line    = NA_real_,
+        con         = con,
+        creds       = creds,
+        player_name = w$player_name,
+        stat        = w$stat,
+        sd          = w$sd,
+        send_alerts = send_alerts
+      ),
+      error = function(e) {
+        message("[player_props] alert error for ", w$player_name, " ", w$stat, " ", w$side,
+                ": ", e$message)
+        NULL
+      }
+    )
+    if (!is.null(res) && isTRUE(res$fired)) n_fired <- n_fired + 1L
   }
 
   message(sprintf("[player_props] detect_prop_edges complete -- %d alert(s) fired", n_fired))

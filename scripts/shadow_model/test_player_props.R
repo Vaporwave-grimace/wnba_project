@@ -856,6 +856,74 @@ check("keeps only the max-ev_pct row per (game_id, player_name, side) group; ind
   stopifnot(nrow(over_b) == 1L, over_b$stat == "pts", abs(over_b$ev_pct - 10) < 1e-9)
 })
 
+# ── Task 14: detect_prop_edges() wires the collapse helper end-to-end ────────
+section("Task 14: detect_prop_edges() real-fires only the collapsed winners")
+
+tmp_db14b <- tempfile(fileext = ".sqlite")
+init_db(tmp_db14b)
+con14b <- open_wnba_db(tmp_db14b)
+
+# Real player_box_scores fixture so compute_prop_projection() succeeds for
+# both pts and pra (reb/ast are hardcoded constants by seed_player_games(),
+# so pra inherits pts's real variance -- same fixture shape as Tasks 4/8/9/10/
+# 13b above). The exact market lines/prices don't matter here since
+# emit_wnba_bet_alert() itself is stubbed below -- only candidate discovery
+# (which markets exist for this game/player) matters.
+seed_player_games(con14b, "Wired Test Player", c(10,10, 8,12,9,11,10,13,7,10,12,8))
+
+dbExecute(con14b, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, commence_time, pulled_at)
+  VALUES
+    ('game16', 'midday', 'player_points', 'Some Team', 'Rival Team', 'pinnacle',
+     'Wired Test Player', 'Over', -110, 7.5, datetime('now', '+2 hours'), datetime('now')),
+    ('game16', 'midday', 'player_points_rebounds_assists', 'Some Team', 'Rival Team', 'pinnacle',
+     'Wired Test Player', 'Over', -110, 16.5, datetime('now', '+2 hours'), datetime('now'))
+")
+
+fake_creds14b <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                      discord_bot_token = "x", discord_webhook_url = "x")
+
+check("only the higher-EV correlated candidate (pts, not pra) real-fires; the independent Under candidate fires too", {
+  # Stub emit_wnba_bet_alert() itself (not just send_discord()) so the real
+  # function body -- and its hardcoded production open_bets.db write -- is
+  # NEVER reached, even with send_alerts = TRUE below. Canned ev_pct per
+  # (stat, side) deterministically makes pts win the Over group; pra/under
+  # has no competing candidate so it always "wins" its own group trivially.
+  original_emit <- emit_wnba_bet_alert
+  emit_wnba_bet_alert <<- function(game_id, market, side, model_line, mkt_line,
+                                    con, creds, steam_confirmed = FALSE,
+                                    player_name = NULL, stat = NULL, sd = NULL,
+                                    send_alerts = TRUE) {
+    ev <- if (stat == "pts" && side == "over") 50
+          else if (stat == "pra" && side == "over") 15
+          else if (stat == "pra" && side == "under") 60
+          else NA_real_
+    if (is.na(ev)) {
+      return(invisible(list(message = NULL, model_prob = NA_real_, ev_pct = NA_real_,
+                            kelly = 0, fired = FALSE, play = NULL, fair_odds = NA_real_)))
+    }
+    play_str <- sprintf("%s %s %s", player_name, if (side == "over") "Over" else "Under", toupper(stat))
+    invisible(list(message = if (send_alerts) "posted" else NULL,
+                  model_prob = 0.6, ev_pct = ev, kelly = 0.01,
+                  fired = send_alerts, play = play_str, fair_odds = -150))
+  }
+  on.exit(emit_wnba_bet_alert <<- original_emit, add = TRUE)
+
+  n <- suppressWarnings(suppressMessages(
+    detect_prop_edges(con14b, fake_creds14b, send_alerts = TRUE, season = 2026L)
+  ))
+
+  # Only 2 real-fires expected: pts-over (winner of the Over group) and
+  # pra-under (no competing candidate) -- NOT 3, which would mean pra-over
+  # also fired and no collapse happened.
+  stopifnot(n == 2L)
+})
+
+dbDisconnect(con14b)
+file.remove(tmp_db14b)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)
