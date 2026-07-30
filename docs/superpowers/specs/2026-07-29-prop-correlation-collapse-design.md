@@ -64,9 +64,14 @@ invisible count of fired alerts). Only its internals restructure, from
    `ev_pct`, and the `model_line`/`sd` used (from `compute_prop_projection()`,
    cached to avoid recomputing in pass 3), for every candidate that produced a
    real `play` (i.e. cleared `MIN_EV_PCT` and had real odds).
-2. **Grouping pass:** group the dry-run results by `(game_id, player_name,
-   side)`, keep the single row with max `ev_pct` per group via
-   `dplyr::slice_max(ev_pct, n = 1, with_ties = FALSE)`.
+2. **Grouping pass:** extracted as its own pure, side-effect-free helper,
+   `.collapse_correlated_prop_edges(evaluated_df)` — groups the dry-run
+   results by `(game_id, player_name, side)` and keeps the single row with max
+   `ev_pct` per group via `dplyr::slice_max(ev_pct, n = 1, with_ties =
+   FALSE)`. Kept as a standalone function (not inlined) specifically so it's
+   directly unit-testable against a synthetic data frame with no DB, no
+   network, and no risk of touching `emit_wnba_bet_alert()`'s hardcoded
+   production `open_bets.db` path (see Testing).
 3. **Real-fire pass:** for each group winner, call `emit_wnba_bet_alert()` again
    with `send_alerts` set to the function's own top-level parameter (preserving
    `detect_prop_edges(con, creds, send_alerts = FALSE, ...)`'s existing ability
@@ -88,31 +93,40 @@ abort the whole pass. No new failure modes introduced.
 
 ## Testing
 
-New test in `scripts/shadow_model/test_player_props.R`. Since suppression is
-only observable through the real-fire pass, the test calls
-`detect_prop_edges(con, creds, send_alerts = TRUE, ...)` with `send_discord()`
-stubbed by reassignment (`send_discord <<- function(message_text, creds,
-channel_id = ...) { captured <<- c(captured, message_text); invisible(TRUE) }`,
-restored via `on.exit()`) — the exact pattern already used in
-`test_player_props.R`'s existing "digest message lists the higher-EV pick
-before the lower-EV pick" test. `send_telegram()` and the `open_bets` direct
-write are left live but harmless against fake credentials/a nonexistent
-`router_db` path in the test's temp environment (same as every other test in
-this file that exercises `send_alerts = TRUE`).
+**Important correction made during planning:** no existing test in
+`test_player_props.R` ever calls `detect_prop_edges()`/`emit_wnba_bet_alert()`
+with `send_alerts = TRUE` — every prop test uses `send_alerts = FALSE`
+specifically to stay side-effect-free. `emit_wnba_bet_alert()`'s `open_bets`
+write uses a hardcoded path (`C:/Users/Mike/sports_data/open_bets.db`) that
+genuinely exists on the development machine — a naive integration test calling
+`detect_prop_edges(..., send_alerts = TRUE)` against a real temp DB would
+still reach that hardcoded path and write real fake rows into the live
+production betting database. This is why the collapse logic is extracted into
+`.collapse_correlated_prop_edges()` (see Architecture) rather than left
+inline — it lets the actual new behavior be tested two ways, neither of which
+risks that write:
 
-Fixture: seed two stats (`pts` and `pra`) for the same player/game/side with
-real, differing `ev_pct` (achievable via different market lines posted for
-each stat against the same underlying rolling-window projection — a lower
-`pts` line and a correspondingly lower `pra` line both clear `MIN_EV_PCT`, but
-at different margins). Assertions:
-
-1. Exactly one Discord message is captured for that `(game_id, player_name,
-   side)` — not two.
-2. The captured message references the higher-EV stat, not the lower one.
-3. A third pick seeded for the same player/game on the OPPOSITE side (e.g. an
-   `Under` line on a different stat) still fires independently — proving the
-   grouping key is genuinely `(game_id, player_name, side)`, not just
-   `(game_id, player_name)`.
+1. **Pure unit test** (no DB, no stubs, no network): construct a synthetic
+   data frame directly — e.g. `(game1, PlayerA, pts, over, ev=50)`, `(game1,
+   PlayerA, pra, over, ev=15)`, `(game1, PlayerA, pra, under, ev=60)`, `(game2,
+   PlayerB, pts, over, ev=10)` — and assert
+   `.collapse_correlated_prop_edges()` returns exactly 3 rows: the `over`
+   group's `pts` winner (50 > 15), the standalone `under` row (`pra`, 60,
+   uncontested), and `game2`'s single row untouched. This directly,
+   deterministically verifies the actual new logic.
+2. **Integration wiring test** (DB-backed, but `emit_wnba_bet_alert()` itself
+   stubbed by reassignment — the same pattern already used for `send_discord()`
+   elsewhere in this file, just applied to a different function): seed real
+   `player_prop_lines` candidate rows (so the real candidate query and real
+   `compute_prop_projection()` still run) but replace `emit_wnba_bet_alert()`
+   with a stub returning canned `ev_pct`/`play`/`fired` values keyed by
+   `(stat, side)`, with `fired` set to whatever `send_alerts` value the stub
+   itself received (mirroring the real function's `fired = send_alerts`
+   contract). Since the stub never calls the real function body, the
+   hardcoded `open_bets.db` path is never reached even when the outer
+   `detect_prop_edges(..., send_alerts = TRUE)` is exercised. Assert exactly 2
+   of the 3 candidates real-fire (`n == 2`), matching the winners the pure
+   function would select.
 
 ## Out of Scope
 
