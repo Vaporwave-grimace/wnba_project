@@ -828,6 +828,34 @@ check("devig produces a different ev_pct than the raw (vigged) calculation would
 dbDisconnect(con14)
 file.remove(tmp_db14)
 
+# ── Task 13: .collapse_correlated_prop_edges() pure grouping logic ───────────
+section("Task 13: .collapse_correlated_prop_edges() pure grouping logic")
+
+check("keeps only the max-ev_pct row per (game_id, player_name, side) group; independent groups untouched", {
+  synthetic <- data.frame(
+    game_id     = c("game1", "game1", "game1", "game2"),
+    player_name = c("PlayerA", "PlayerA", "PlayerA", "PlayerB"),
+    stat        = c("pts", "pra", "pra", "pts"),
+    side        = c("over", "over", "under", "over"),
+    ev_pct      = c(50, 15, 60, 10),
+    model_line  = c(11, 17, 17, 20),
+    sd          = c(2.28, 2.28, 2.28, 3.0),
+    stringsAsFactors = FALSE
+  )
+  winners <- .collapse_correlated_prop_edges(synthetic)
+
+  stopifnot(nrow(winners) == 3L)
+
+  over_a <- winners[winners$game_id == "game1" & winners$side == "over", ]
+  stopifnot(nrow(over_a) == 1L, over_a$stat == "pts", abs(over_a$ev_pct - 50) < 1e-9)
+
+  under_a <- winners[winners$game_id == "game1" & winners$side == "under", ]
+  stopifnot(nrow(under_a) == 1L, under_a$stat == "pra", abs(under_a$ev_pct - 60) < 1e-9)
+
+  over_b <- winners[winners$game_id == "game2", ]
+  stopifnot(nrow(over_b) == 1L, over_b$stat == "pts", abs(over_b$ev_pct - 10) < 1e-9)
+})
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)

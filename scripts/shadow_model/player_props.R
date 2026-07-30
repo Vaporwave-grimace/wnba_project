@@ -327,6 +327,23 @@ fetch_player_prop_odds <- function(con, game_ids, snapshot_type = "midday") {
 # function send_prop_digest() (same unfiltered query, bypassing that outer
 # gate) evaluated 20 games back to 07-13 and produced 370 fake "edges."
 # Added here so both callers are safe even if invoked directly.
+
+# Pure, side-effect-free: groups dry-run-evaluated candidates by
+# (game_id, player_name, side) and keeps only the max-ev_pct row per group.
+# pra = pts+reb+ast exactly, so a bias in one stat shows up across all four --
+# this collapses that redundancy down to the single highest-EV derivative.
+# Over and Under are never grouped together (a real, independent signal in
+# opposite directions is not noise, not redundancy). No DB/network access --
+# kept standalone specifically so it's directly unit-testable against a
+# synthetic data frame, with no risk of touching emit_wnba_bet_alert()'s
+# hardcoded production open_bets.db path.
+.collapse_correlated_prop_edges <- function(evaluated_df) {
+  evaluated_df |>
+    dplyr::group_by(game_id, player_name, side) |>
+    dplyr::slice_max(ev_pct, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup()
+}
+
 detect_prop_edges <- function(con, creds, send_alerts = TRUE,
                               season = as.integer(format(Sys.Date(), "%Y"))) {
   candidates <- dbGetQuery(con, "
