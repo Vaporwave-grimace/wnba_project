@@ -909,16 +909,24 @@ check("only the higher-EV correlated candidate (pts, not pra) real-fires; the in
                   model_prob = 0.6, ev_pct = ev, kelly = 0.01,
                   fired = send_alerts, play = play_str, fair_odds = -150))
   }
-  on.exit(emit_wnba_bet_alert <<- original_emit, add = TRUE)
+  # Restoration MUST use tryCatch(..., finally = ...), not on.exit(): this
+  # on.exit() is registered while forcing a promise argument inside check()'s
+  # tryCatch({ result <- expr; ... }), and that does not create the kind of
+  # call frame on.exit() binds to here -- confirmed empirically the stub
+  # remains permanently installed afterward in BOTH the pass and fail case.
+  # tryCatch(..., finally = ...) restores correctly in both cases instead.
+  tryCatch({
+    n <- suppressWarnings(suppressMessages(
+      detect_prop_edges(con14b, fake_creds14b, send_alerts = TRUE, season = 2026L)
+    ))
 
-  n <- suppressWarnings(suppressMessages(
-    detect_prop_edges(con14b, fake_creds14b, send_alerts = TRUE, season = 2026L)
-  ))
-
-  # Only 2 real-fires expected: pts-over (winner of the Over group) and
-  # pra-under (no competing candidate) -- NOT 3, which would mean pra-over
-  # also fired and no collapse happened.
-  stopifnot(n == 2L)
+    # Only 2 real-fires expected: pts-over (winner of the Over group) and
+    # pra-under (no competing candidate) -- NOT 3, which would mean pra-over
+    # also fired and no collapse happened.
+    stopifnot(n == 2L)
+  }, finally = {
+    emit_wnba_bet_alert <<- original_emit
+  })
 })
 
 dbDisconnect(con14b)
