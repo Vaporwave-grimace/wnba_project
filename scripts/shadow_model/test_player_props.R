@@ -932,6 +932,97 @@ check("only the higher-EV correlated candidate (pts, not pra) real-fires; the in
 dbDisconnect(con14b)
 file.remove(tmp_db14b)
 
+# ── Task 15: skew-normal model_prob with pnorm() fallback ────────────────────
+section("Task 15: .get_prop_skew() / sn::psn() wiring with pnorm() fallback")
+
+check(".get_prop_skew falls back to 0.0 with con = NULL", {
+  s <- .get_prop_skew(NULL, "pts", 0.0)
+  stopifnot(abs(s - 0.0) < 1e-9)
+})
+
+tmp_db15 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db15)
+con15 <- open_wnba_db(tmp_db15)
+
+check(".get_prop_skew falls back to 0.0 when no model_config row exists", {
+  s <- .get_prop_skew(con15, "pts", 0.0)
+  stopifnot(abs(s - 0.0) < 1e-9)
+})
+
+dbExecute(con15, "
+  INSERT INTO games (game_id, commence_time, home_team, away_team)
+  VALUES ('game17', datetime('now', '+2 hours'), 'Home Team', 'Rival Team')
+")
+dbExecute(con15, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game17', 'midday', 'Home Team', 'Rival Team', datetime('now', '+2 hours'))
+")
+# 3 books, matching the book-depth gate default (min_books=3).
+dbExecute(con15, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game17', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
+     'Skew Test Player', 'Over', -110, 10.5, datetime('now')),
+    ('game17', 'midday', 'player_points', 'Home Team', 'Rival Team', 'draftkings',
+     'Skew Test Player', 'Over', -105, 10.5, datetime('now')),
+    ('game17', 'midday', 'player_points', 'Home Team', 'Rival Team', 'fanduel',
+     'Skew Test Player', 'Over', -108, 10.5, datetime('now'))
+")
+
+fake_creds15 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                     discord_bot_token = "x", discord_webhook_url = "x")
+
+check("zero skew (uncalibrated default) makes model_prob numerically identical to plain pnorm()", {
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game17", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con15, creds = fake_creds15,
+    player_name = "Skew Test Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  expected <- pnorm(10.5, mean = 11, sd = 1.9, lower.tail = FALSE)
+  stopifnot(abs(res$model_prob - min(expected, MODEL_PROB_CEILING)) < 1e-9)
+})
+
+check("a real calibrated skew measurably changes model_prob vs the zero-skew baseline", {
+  dbExecute(con15, "
+    INSERT INTO model_config (param, value, updated_at)
+    VALUES ('wnba_prop_skew_pts', 0.7, datetime('now'))
+  ")
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game17", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con15, creds = fake_creds15,
+    player_name = "Skew Test Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  dp <- sn::cp2dp(c(11, 1.9, 0.7), family = "SN")
+  expected_skewed <- 1 - sn::psn(10.5, dp = dp)
+  stopifnot(abs(res$model_prob - min(expected_skewed, MODEL_PROB_CEILING)) < 1e-9)
+
+  baseline <- pnorm(10.5, mean = 11, sd = 1.9, lower.tail = FALSE)
+  stopifnot(abs(res$model_prob - min(baseline, MODEL_PROB_CEILING)) > 1e-4)
+})
+
+check("an invalid calibrated skew (out of range) falls back to plain pnorm(), not a crash", {
+  dbExecute(con15, "UPDATE model_config SET value = 5.0 WHERE param = 'wnba_prop_skew_pts'")
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game17", market = "prop", side = "over",
+    model_line = 11, mkt_line = NA_real_,
+    con = con15, creds = fake_creds15,
+    player_name = "Skew Test Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  stopifnot(!is.na(res$model_prob))
+  expected <- pnorm(10.5, mean = 11, sd = 1.9, lower.tail = FALSE)
+  stopifnot(abs(res$model_prob - min(expected, MODEL_PROB_CEILING)) < 1e-9)
+})
+
+dbDisconnect(con15)
+file.remove(tmp_db15)
+
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
 if (errors > 0) quit(status = 1)

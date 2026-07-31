@@ -52,6 +52,20 @@ MIN_EV_PCT <- 3.0
   }, error = \(e) default)
 }
 
+# Reads a calibrated prop skew (shape) parameter from model_config (written
+# by calibrate_prop_skew() in calibrate_props.R); falls back to 0.0 (no
+# skew -- plain Gaussian, since sn::psn() with skew=0 is numerically
+# identical to pnorm()) when con is NULL, unreachable, or no calibrated
+# value exists yet. Mirrors .get_prop_sd_scale() above.
+.get_prop_skew <- function(con, stat, default = 0.0) {
+  if (is.null(con)) return(default)
+  tryCatch({
+    v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = ?",
+                    list(sprintf("wnba_prop_skew_%s", stat)))$value[1]
+    if (is.null(v) || is.na(v)) default else v
+  }, error = \(e) default)
+}
+
 # Reads prop_min_books/prop_main_line_tol from model_config with module-constant
 # fallbacks, same pattern as .get_wnba_sd().
 .get_prop_config <- function(con) {
@@ -342,10 +356,19 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     play  <- sprintf("%s %s %.1f %s", player_name,
                      if (side == "over") "Over" else "Under", point, toupper(stat))
     calibrated_sd <- sd * .get_prop_sd_scale(con, stat, 1.0)
-    model_prob <- if (side == "over")
-      pnorm(point, mean = model_line, sd = calibrated_sd, lower.tail = FALSE)
-    else
-      pnorm(point, mean = model_line, sd = calibrated_sd, lower.tail = TRUE)
+    skew <- .get_prop_skew(con, stat, 0.0)
+    # sn:: is namespace-qualified deliberately -- NOT library(sn) at the top
+    # of this file. If sn is missing or broken, this tryCatch degrades to
+    # plain pnorm() at call time; a top-level library(sn) would instead
+    # hard-fail sourcing this entire file, which defeats the fallback.
+    model_prob <- tryCatch({
+      dp <- sn::cp2dp(c(model_line, calibrated_sd, skew), family = "SN")
+      if (is.null(dp) || anyNA(dp)) stop("invalid dp parameters")
+      if (side == "over") 1 - sn::psn(point, dp = dp) else sn::psn(point, dp = dp)
+    }, error = function(e) {
+      if (side == "over") pnorm(point, mean = model_line, sd = calibrated_sd, lower.tail = FALSE)
+      else pnorm(point, mean = model_line, sd = calibrated_sd, lower.tail = TRUE)
+    })
   }
 
   model_prob <- min(model_prob, MODEL_PROB_CEILING)
