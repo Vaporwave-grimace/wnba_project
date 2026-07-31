@@ -197,6 +197,7 @@ if (hour_et() >= SETTLE_HOUR && !has_run_today("settle", con)) {
   if (!has_run_today("prop_sd_calibration", con)) {
     log_info("MORNING — running prop SD calibration")
     safe_run(calibrate_prop_sd_run(con), "prop SD calibration")
+    safe_run(calibrate_prop_skew_run(con), "prop skew calibration")
     mark_run_today("prop_sd_calibration", con)
   }
 }

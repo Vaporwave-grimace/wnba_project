@@ -61,6 +61,21 @@ MAX_SD_SCALE_DELTA  <- 0.25
        def_factor = def_factor, projected_mean = baseline_mean * def_factor)
 }
 
+# Simple "g1"-style sample skewness (third standardized moment): population
+# third-moment numerator over sample SD cubed. Matches the standard, widely
+# used definition (e.g. moments::skewness()'s default). Returns NA for
+# fewer than 3 finite values or when SD is 0/NA (a constant residual has
+# undefined skewness, not zero).
+.sample_skewness <- function(x) {
+  x <- x[!is.na(x)]
+  n <- length(x)
+  if (n < 3) return(NA_real_)
+  m <- mean(x)
+  s <- sd(x)
+  if (is.na(s) || s == 0) return(NA_real_)
+  (sum((x - m)^3) / n) / s^3
+}
+
 # ── Residuals ─────────────────────────────────────────────────────────────────
 
 #' Per-stat empirical residual SD + bias check, from a causal retroactive
@@ -108,6 +123,7 @@ compute_prop_sd_residuals <- function(con) {
       empirical_sd  = sd(residual, na.rm = TRUE),
       mean_residual = mean(residual, na.rm = TRUE),
       mean_raw_sd   = mean(raw_sd, na.rm = TRUE),
+      skewness      = .sample_skewness(residual),
       .groups       = "drop"
     )
 }
@@ -163,4 +179,60 @@ calibrate_prop_sd <- function(con, min_n = MIN_N_APPLY_PROP, max_delta = MAX_SD_
 #' Morning orchestrator -- called from run_pipeline.R.
 calibrate_prop_sd_run <- function(con) {
   calibrate_prop_sd(con)
+}
+
+MIN_N_APPLY_PROP_SKEW <- 500L
+MAX_SKEW_DELTA        <- 0.15
+SKEW_CLAMP            <- c(-0.9, 0.9)
+
+#' Guardrailed upsert of wnba_prop_skew_{pts,reb,ast,pra} to model_config.
+calibrate_prop_skew <- function(con, min_n = MIN_N_APPLY_PROP_SKEW, max_delta = MAX_SKEW_DELTA) {
+  residuals <- compute_prop_sd_residuals(con)
+  if (nrow(residuals) == 0) {
+    message("[calibrate] prop_skew: no player_box_scores rows yet")
+    return(invisible(FALSE))
+  }
+
+  applied <- FALSE
+  for (stat in c("pts", "reb", "ast", "pra")) {
+    row <- filter(residuals, stat == !!stat)
+    if (nrow(row) == 0 || is.na(row$skewness[1])) next
+
+    param   <- sprintf("wnba_prop_skew_%s", stat)
+    default <- 0.0
+
+    if (row$n[1] < min_n) {
+      message(sprintf("[calibrate] prop_skew/%s: n=%d < min_n=%d -- skipping",
+                      stat, row$n[1], min_n))
+      next
+    }
+
+    current <- tryCatch({
+      v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = ?", list(param))$value[1]
+      if (is.null(v) || is.na(v)) default else v
+    }, error = \(e) default)
+
+    new_skew <- row$skewness[1]
+    delta    <- new_skew - current
+    if (abs(delta) > max_delta) {
+      new_skew <- current + sign(delta) * max_delta
+      message(sprintf("[calibrate] prop_skew/%s: capping delta to %.2f -> %.3f",
+                      stat, max_delta, new_skew))
+    }
+    new_skew <- max(SKEW_CLAMP[1], min(SKEW_CLAMP[2], new_skew))
+
+    .set_config_param(
+      con, param, new_skew,
+      n_games = row$n[1],
+      notes = sprintf("empirical residual skewness, clamped to [%.1f, %.1f]",
+                      SKEW_CLAMP[1], SKEW_CLAMP[2])
+    )
+    applied <- TRUE
+  }
+  invisible(applied)
+}
+
+#' Morning orchestrator -- called from run_pipeline.R.
+calibrate_prop_skew_run <- function(con) {
+  calibrate_prop_skew(con)
 }
