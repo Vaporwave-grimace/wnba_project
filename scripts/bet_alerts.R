@@ -353,6 +353,17 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
     }
 
     point <- bo$point
+
+    # Directional Edge Validation: OVER requires model_line > point, UNDER requires model_line < point
+    if ((side == "over" && model_line <= point) || (side == "under" && model_line >= point)) {
+      message(sprintf(
+        "[bet_alerts/WNBA] %s %s %s -- Directional predicate failed (model_line=%.1f, point=%.1f), skipping",
+        player_name, stat, side, model_line, point
+      ))
+      return(invisible(list(message = NULL, model_prob = NA_real_, ev_pct = NA_real_,
+                            kelly = 0, fired = FALSE, play = NULL, fair_odds = NA_real_)))
+    }
+
     play  <- sprintf("%s %s %.1f %s", player_name,
                      if (side == "over") "Over" else "Under", point, toupper(stat))
     calibrated_sd <- sd * .get_prop_sd_scale(con, stat, 1.0)
@@ -400,6 +411,31 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
                     game_id, market, side, ev_pct %||% 0, MIN_EV_PCT))
     return(invisible(list(message = NULL, model_prob = model_prob, ev_pct = ev_pct,
                           kelly = kelly, fired = FALSE)))
+  }
+
+  # ── Directional Validation Guard ──────────────────────────────────────────────
+  # OVER alert requires model_line >= point; UNDER alert requires model_line <= point.
+  # Prevents plus-money odds from generating upside-down plays (e.g. OVER when model < line).
+  if (market == "prop" && !is.na(point)) {
+    directional_ok <- if (side == "over") (model_line >= point) else (model_line <= point)
+    if (!directional_ok) {
+      message(sprintf("[bet_alerts/WNBA] %s %s %s — directional mismatch (model=%.1f vs line=%.1f), dropping alert",
+                      player_name, stat, side, model_line, point))
+      return(invisible(list(message = NULL, model_prob = model_prob, ev_pct = ev_pct,
+                            kelly = kelly, fired = FALSE, play = NULL, fair_odds = fair_odds)))
+    }
+  }
+
+  # ── Directional edge validation ──────────────────────────────────────────────
+  # OVER requires model_line > point; UNDER requires model_line < point.
+  if (market == "prop") {
+    directional_ok <- if (side == "over") (model_line > bo$point) else (model_line < bo$point)
+    if (!directional_ok) {
+      message(sprintf("[bet_alerts/WNBA] %s prop %s failed directional check (model_line=%.1f vs point=%.1f)",
+                      player_name, side, model_line, bo$point))
+      return(invisible(list(message = NULL, model_prob = model_prob, ev_pct = ev_pct,
+                            kelly = 0, fired = FALSE, play = NULL, fair_odds = fair_odds)))
+    }
   }
 
   # ── Metadata ─────────────────────────────────────────────────────────────────

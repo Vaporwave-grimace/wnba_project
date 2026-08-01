@@ -332,14 +332,13 @@ fetch_player_prop_odds <- function(con, game_ids, snapshot_type = "midday") {
 # (game_id, player_name, side) and keeps only the max-ev_pct row per group.
 # pra = pts+reb+ast exactly, so a bias in one stat shows up across all four --
 # this collapses that redundancy down to the single highest-EV derivative.
-# Over and Under are never grouped together (a real, independent signal in
-# opposite directions is not noise, not redundancy). No DB/network access --
+# Single-player correlation collapse: yield a maximum of 1 play per player
+# per slate (prioritizing highest EV prop edge overall). No DB/network access --
 # kept standalone specifically so it's directly unit-testable against a
-# synthetic data frame, with no risk of touching emit_wnba_bet_alert()'s
-# hardcoded production open_bets.db path.
+# synthetic data frame.
 .collapse_correlated_prop_edges <- function(evaluated_df) {
   evaluated_df |>
-    dplyr::group_by(game_id, player_name, side) |>
+    dplyr::group_by(player_name) |>
     dplyr::slice_max(ev_pct, n = 1, with_ties = FALSE) |>
     dplyr::ungroup()
 }
@@ -355,7 +354,9 @@ detect_prop_edges <- function(con, creds, send_alerts = TRUE,
       WHERE ppl2.game_id = ppl.game_id
       ORDER BY pulled_at DESC LIMIT 1
     )
-    AND datetime(ppl.commence_time) > datetime('now')
+    AND (ppl.commence_time IS NULL OR datetime(ppl.commence_time) BETWEEN datetime('now', '-2 hours') AND datetime('now', '+24 hours'))
+    AND ppl.player_name IS NOT NULL
+    AND TRIM(ppl.player_name) NOT IN ('', 'Unknown Player', 'Unknown', 'N/A')
   ")
 
   if (nrow(candidates) == 0) {
@@ -493,7 +494,9 @@ send_prop_digest <- function(con, creds, min_ev = 6.0,
       WHERE ppl2.game_id = ppl.game_id
       ORDER BY pulled_at DESC LIMIT 1
     )
-    AND datetime(ppl.commence_time) > datetime('now')
+    AND (ppl.commence_time IS NULL OR datetime(ppl.commence_time) BETWEEN datetime('now', '-2 hours') AND datetime('now', '+24 hours'))
+    AND ppl.player_name IS NOT NULL
+    AND TRIM(ppl.player_name) NOT IN ('', 'Unknown Player', 'Unknown')
   ")
 
   if (nrow(candidates) == 0) {
@@ -501,7 +504,7 @@ send_prop_digest <- function(con, creds, min_ev = 6.0,
     return(invisible(0L))
   }
 
-  picks <- list()
+  evaluated <- list()
   for (i in seq_len(nrow(candidates))) {
     row  <- candidates[i, ]
     stat <- names(STAT_MARKET_MAP)[STAT_MARKET_MAP == row$market]
@@ -545,27 +548,37 @@ send_prop_digest <- function(con, creds, min_ev = 6.0,
         }
       )
       if (!is.null(res) && !is.null(res$play) && !is.null(res$ev_pct) && !is.na(res$ev_pct) && res$ev_pct >= min_ev) {
-        picks[[length(picks) + 1L]] <- list(play = res$play, fair_odds = res$fair_odds, ev_pct = res$ev_pct)
+        evaluated[[length(evaluated) + 1L]] <- data.frame(
+          game_id     = row$game_id,
+          player_name = row$player_name,
+          stat        = stat,
+          side        = side,
+          ev_pct      = res$ev_pct,
+          play        = res$play,
+          fair_odds   = res$fair_odds,
+          stringsAsFactors = FALSE
+        )
       }
     }
   }
 
-  if (length(picks) == 0) {
+  if (length(evaluated) == 0) {
     message(sprintf("[player_props] Digest: no edges >= %.1f%% EV today.", min_ev))
     return(invisible(0L))
   }
 
-  ev_order <- order(vapply(picks, function(p) p$ev_pct, numeric(1)), decreasing = TRUE)
-  picks    <- picks[ev_order]
+  # Collapse correlated same-player picks down to max 1 per player
+  winners <- .collapse_correlated_prop_edges(dplyr::bind_rows(evaluated))
+  winners <- winners[order(winners$ev_pct, decreasing = TRUE), ]
 
-  lines_out <- vapply(seq_along(picks), function(i) {
-    p <- picks[[i]]
-    sprintf("%d. %s — Fair %+d | Edge %+.1f%%", i, p$play, as.integer(p$fair_odds), p$ev_pct)
+  lines_out <- vapply(seq_len(nrow(winners)), function(i) {
+    w <- winners[i, ]
+    sprintf("%d. %s — Fair %+d | Edge %+.1f%%", i, w$play, as.integer(w$fair_odds), w$ev_pct)
   }, character(1))
 
   header <- sprintf("📋 **WNBA Daily Top Props** — %s (%d pick%s ≥%.0f%% EV)",
-                    format(lubridate::with_tz(Sys.time(), "America/New_York"), "%I:%M %p ET"), length(picks),
-                    if (length(picks) == 1) "" else "s", min_ev)
+                    format(lubridate::with_tz(Sys.time(), "America/New_York"), "%I:%M %p ET"), nrow(winners),
+                    if (nrow(winners) == 1) "" else "s", min_ev)
 
   msg <- paste(c(header, lines_out), collapse = "\n")
 
@@ -574,6 +587,6 @@ send_prop_digest <- function(con, creds, min_ev = 6.0,
     error = function(e) message("[player_props] Digest Discord send failed: ", e$message)
   )
 
-  message(sprintf("[player_props] Digest sent -- %d pick(s) >= %.1f%% EV", length(picks), min_ev))
-  invisible(length(picks))
+  message(sprintf("[player_props] Digest sent -- %d pick(s) >= %.1f%% EV", nrow(winners), min_ev))
+  invisible(nrow(winners))
 }

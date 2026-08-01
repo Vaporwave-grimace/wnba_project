@@ -550,7 +550,7 @@ check(".get_prop_sd_scale falls back to 1.0 when no model_config row exists", {
 check("a stored scale of 2.0 changes model_prob vs. an unscaled baseline", {
   res_unscaled <- suppressMessages(emit_wnba_bet_alert(
     game_id = "game10", market = "prop", side = "over",
-    model_line = 11, mkt_line = NA_real_,
+    model_line = 15, mkt_line = NA_real_,
     con = con10, creds = fake_creds10,
     player_name = "Steady Scorer", stat = "pts", sd = 1.9,
     send_alerts = FALSE
@@ -563,12 +563,13 @@ check("a stored scale of 2.0 changes model_prob vs. an unscaled baseline", {
 
   res_scaled <- suppressMessages(emit_wnba_bet_alert(
     game_id = "game10", market = "prop", side = "over",
-    model_line = 11, mkt_line = NA_real_,
+    model_line = 15, mkt_line = NA_real_,
     con = con10, creds = fake_creds10,
     player_name = "Steady Scorer", stat = "pts", sd = 1.9,
     send_alerts = FALSE
   ))
 
+  stopifnot(!is.na(res_unscaled$model_prob), !is.na(res_scaled$model_prob))
   stopifnot(abs(res_unscaled$model_prob - res_scaled$model_prob) > 1e-6)
 })
 
@@ -831,11 +832,11 @@ file.remove(tmp_db14)
 # ── Task 13: .collapse_correlated_prop_edges() pure grouping logic ───────────
 section("Task 13: .collapse_correlated_prop_edges() pure grouping logic")
 
-check("keeps only the max-ev_pct row per (game_id, player_name, side) group; independent groups untouched", {
+check("keeps only the single max-ev_pct row per player across all games; independent players untouched", {
   synthetic <- data.frame(
-    game_id     = c("game1", "game1", "game1", "game2"),
+    game_id     = c("game1", "game1", "game2", "game2"),
     player_name = c("PlayerA", "PlayerA", "PlayerA", "PlayerB"),
-    stat        = c("pts", "pra", "pra", "pts"),
+    stat        = c("pts", "pra", "reb", "pts"),
     side        = c("over", "over", "under", "over"),
     ev_pct      = c(50, 15, 60, 10),
     model_line  = c(11, 17, 17, 20),
@@ -844,16 +845,14 @@ check("keeps only the max-ev_pct row per (game_id, player_name, side) group; ind
   )
   winners <- .collapse_correlated_prop_edges(synthetic)
 
-  stopifnot(nrow(winners) == 3L)
+  stopifnot(nrow(winners) == 2L)
 
-  over_a <- winners[winners$game_id == "game1" & winners$side == "over", ]
-  stopifnot(nrow(over_a) == 1L, over_a$stat == "pts", abs(over_a$ev_pct - 50) < 1e-9)
+  player_a <- winners[winners$player_name == "PlayerA", ]
+  stopifnot(nrow(player_a) == 1L, player_a$stat == "reb", player_a$side == "under",
+            player_a$game_id == "game2", abs(player_a$ev_pct - 60) < 1e-9)
 
-  under_a <- winners[winners$game_id == "game1" & winners$side == "under", ]
-  stopifnot(nrow(under_a) == 1L, under_a$stat == "pra", abs(under_a$ev_pct - 60) < 1e-9)
-
-  over_b <- winners[winners$game_id == "game2", ]
-  stopifnot(nrow(over_b) == 1L, over_b$stat == "pts", abs(over_b$ev_pct - 10) < 1e-9)
+  player_b <- winners[winners$player_name == "PlayerB", ]
+  stopifnot(nrow(player_b) == 1L, player_b$stat == "pts", abs(player_b$ev_pct - 10) < 1e-9)
 })
 
 # ── Task 14: detect_prop_edges() wires the collapse helper end-to-end ────────
@@ -863,12 +862,6 @@ tmp_db14b <- tempfile(fileext = ".sqlite")
 init_db(tmp_db14b)
 con14b <- open_wnba_db(tmp_db14b)
 
-# Real player_box_scores fixture so compute_prop_projection() succeeds for
-# both pts and pra (reb/ast are hardcoded constants by seed_player_games(),
-# so pra inherits pts's real variance -- same fixture shape as Tasks 4/8/9/10/
-# 13b above). The exact market lines/prices don't matter here since
-# emit_wnba_bet_alert() itself is stubbed below -- only candidate discovery
-# (which markets exist for this game/player) matters.
 seed_player_games(con14b, "Wired Test Player", c(10,10, 8,12,9,11,10,13,7,10,12,8))
 
 dbExecute(con14b, "
@@ -885,12 +878,7 @@ dbExecute(con14b, "
 fake_creds14b <- list(telegram_bot_token = "x", telegram_chat_id = "x",
                       discord_bot_token = "x", discord_webhook_url = "x")
 
-check("only the higher-EV correlated candidate (pts, not pra) real-fires; the independent Under candidate fires too", {
-  # Stub emit_wnba_bet_alert() itself (not just send_discord()) so the real
-  # function body -- and its hardcoded production open_bets.db write -- is
-  # NEVER reached, even with send_alerts = TRUE below. Canned ev_pct per
-  # (stat, side) deterministically makes pts win the Over group; pra/under
-  # has no competing candidate so it always "wins" its own group trivially.
+check("only the single highest-EV candidate across all stats/sides for a player real-fires", {
   original_emit <- emit_wnba_bet_alert
   emit_wnba_bet_alert <<- function(game_id, market, side, model_line, mkt_line,
                                     con, creds, steam_confirmed = FALSE,
@@ -909,21 +897,13 @@ check("only the higher-EV correlated candidate (pts, not pra) real-fires; the in
                   model_prob = 0.6, ev_pct = ev, kelly = 0.01,
                   fired = send_alerts, play = play_str, fair_odds = -150))
   }
-  # Restoration MUST use tryCatch(..., finally = ...), not on.exit(): this
-  # on.exit() is registered while forcing a promise argument inside check()'s
-  # tryCatch({ result <- expr; ... }), and that does not create the kind of
-  # call frame on.exit() binds to here -- confirmed empirically the stub
-  # remains permanently installed afterward in BOTH the pass and fail case.
-  # tryCatch(..., finally = ...) restores correctly in both cases instead.
   tryCatch({
     n <- suppressWarnings(suppressMessages(
       detect_prop_edges(con14b, fake_creds14b, send_alerts = TRUE, season = 2026L)
     ))
 
-    # Only 2 real-fires expected: pts-over (winner of the Over group) and
-    # pra-under (no competing candidate) -- NOT 3, which would mean pra-over
-    # also fired and no collapse happened.
-    stopifnot(n == 2L)
+    # Exactly 1 real-fire expected per player max
+    stopifnot(n == 1L)
   }, finally = {
     emit_wnba_bet_alert <<- original_emit
   })
@@ -1022,6 +1002,62 @@ check("an invalid calibrated skew (out of range) falls back to plain pnorm(), no
 
 dbDisconnect(con15)
 file.remove(tmp_db15)
+
+# ── Task 17: Directional edge validation ──────────────────────────────────────
+section("Task 17: Directional edge validation (Over requires model_line > point, Under requires model_line < point)")
+
+tmp_db17 <- tempfile(fileext = ".sqlite")
+init_db(tmp_db17)
+con17 <- open_wnba_db(tmp_db17)
+
+dbExecute(con17, "
+  INSERT INTO games (game_id, commence_time, home_team, away_team)
+  VALUES ('game18', datetime('now', '+2 hours'), 'Home Team', 'Rival Team')
+")
+dbExecute(con17, "
+  INSERT INTO lines (game_id, snapshot_type, home_team, away_team, commence_time)
+  VALUES ('game18', 'midday', 'Home Team', 'Rival Team', datetime('now', '+2 hours'))
+")
+dbExecute(con17, "
+  INSERT INTO player_prop_lines
+    (game_id, snapshot_type, market, home_team, away_team, bookmaker,
+     player_name, outcome_name, price, point, pulled_at)
+  VALUES
+    ('game18', 'midday', 'player_points', 'Home Team', 'Rival Team', 'pinnacle',
+     'Directional Player', 'Over', -110, 15.5, datetime('now')),
+    ('game18', 'midday', 'player_points', 'Home Team', 'Rival Team', 'draftkings',
+     'Directional Player', 'Over', -105, 15.5, datetime('now')),
+    ('game18', 'midday', 'player_points', 'Home Team', 'Rival Team', 'fanduel',
+     'Directional Player', 'Over', -108, 15.5, datetime('now'))
+")
+
+fake_creds17 <- list(telegram_bot_token = "x", telegram_chat_id = "x",
+                     discord_bot_token = "x", discord_webhook_url = "x")
+
+check("Over bet fails directional check when model_line <= point (14.0 <= 15.5)", {
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game18", market = "prop", side = "over",
+    model_line = 14.0, mkt_line = NA_real_,
+    con = con17, creds = fake_creds17,
+    player_name = "Directional Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  stopifnot(is.na(res$model_prob), is.null(res$play), isFALSE(res$fired))
+})
+
+check("Over bet passes directional check when model_line > point (17.0 > 15.5)", {
+  res <- suppressMessages(emit_wnba_bet_alert(
+    game_id = "game18", market = "prop", side = "over",
+    model_line = 17.0, mkt_line = NA_real_,
+    con = con17, creds = fake_creds17,
+    player_name = "Directional Player", stat = "pts", sd = 1.9,
+    send_alerts = FALSE
+  ))
+  stopifnot(!is.na(res$model_prob), !is.null(res$play))
+})
+
+dbDisconnect(con17)
+file.remove(tmp_db17)
 
 cat(sprintf("\n%s -- %d error(s)\n",
            if (errors == 0) "ALL PASS" else "FAILURES", errors))
