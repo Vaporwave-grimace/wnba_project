@@ -27,6 +27,12 @@ MAX_THRESHOLD_DELTA <- 0.5     # max change in DEV_THRESHOLD per calibration run
 
 .set_config_param <- function(con, param, value, n_games = NULL,
                                wr_before = NULL, wr_after = NULL, notes = NULL) {
+  # dbExecute()'s parameter list needs length-1 scalars -- a bare NULL has
+  # length 0 and throws "Parameter N does not have length 1" the first time a
+  # caller actually leaves an optional arg unset (pre-existing latent bug;
+  # every prior caller happened to always supply real values). NA is the
+  # correct length-1 stand-in for "no value" and binds as SQL NULL correctly.
+  na_if_null <- function(x, na_type = NA_real_) if (is.null(x)) na_type else x
   dbExecute(con, "
     INSERT INTO model_config (param, value, updated_at, n_games, brier_before,
                                brier_after, notes)
@@ -38,7 +44,8 @@ MAX_THRESHOLD_DELTA <- 0.5     # max change in DEV_THRESHOLD per calibration run
       brier_before = excluded.brier_before,
       brier_after  = excluded.brier_after,
       notes      = excluded.notes
-  ", list(param, value, n_games, wr_before, wr_after, notes))
+  ", list(param, value, na_if_null(n_games, NA_integer_), na_if_null(wr_before),
+          na_if_null(wr_after), na_if_null(notes, NA_character_)))
   message(sprintf("[calibrate] model_config '%s' → %.3f  (n=%s)", param,
                   value, if (!is.null(n_games)) n_games else "?"))
 }
@@ -439,6 +446,98 @@ calibrate_injury_impact <- function(con, min_n = 20L) {
   invisible(tibble(n = n, win_rate = wr))
 }
 
+# ── Scoring-variance SD calibration (totals/spreads) ──────────────────────────
+#
+# bet_alerts.R's .WNBA_TOTAL_SD/.WNBA_SPREAD_SD feed pnorm() to turn a model's
+# point prediction (model_line) into model_prob -- they were hardcoded guesses
+# (8.0/5.0) since the pipeline's first session, flagged repeatedly as
+# "calibrate once enough games accumulate" (see bet_alerts.R's own comment).
+# That data now exists: clv_log carries model_line per fired position, joined
+# against game_outcomes' real actual_total/actual_spread. The empirical SD of
+# (model_line - actual) *is* the correct SD for that pnorm() call -- it's
+# asking "how far does the model's point prediction typically miss," which is
+# exactly what pnorm()'s sd parameter needs to be honest.
+#
+# Same guardrail philosophy as the rest of this file (MIN_N_APPLY=30), but no
+# win-rate-improvement gate -- unlike a threshold sweep, this isn't searching
+# for the value that wins the most bets, it's measuring an actual variance.
+# A large single-run swing more likely means a genuine miscalibration than
+# noise, so it's still capped (MAX_SD_DELTA) rather than applied unbounded.
+MAX_SD_DELTA <- 3.0   # max change in either SD per calibration run
+
+#' Empirical SD of (model_line - actual) per market, from settled positions.
+#' Returns tibble(market, n, sd, mean_residual) or empty tibble if no data.
+compute_wnba_sd_residuals <- function(con) {
+  rows <- tryCatch(
+    dbGetQuery(con, "
+      SELECT c.market, c.model_line,
+             CASE c.market WHEN 'totals' THEN go.actual_total ELSE go.actual_spread END AS actual
+      FROM clv_log c
+      JOIN game_outcomes go ON go.game_id = c.game_id
+      WHERE c.clv IS NOT NULL AND c.closing_line IS NOT NULL
+        AND c.market IN ('totals', 'spreads')
+    ") |> as_tibble(),
+    error = \(e) tibble()
+  )
+  rows <- filter(rows, !is.na(actual), !is.na(model_line))
+  if (nrow(rows) == 0) return(tibble())
+
+  rows |>
+    mutate(residual = model_line - actual) |>
+    group_by(market) |>
+    summarise(
+      n             = n(),
+      sd            = sd(residual, na.rm = TRUE),
+      mean_residual = mean(residual, na.rm = TRUE),
+      .groups       = "drop"
+    )
+}
+
+#' Guardrailed upsert of wnba_total_sd / wnba_spread_sd to model_config.
+calibrate_wnba_sd <- function(con, min_n = MIN_N_APPLY, max_delta = MAX_SD_DELTA) {
+  residuals <- compute_wnba_sd_residuals(con)
+  if (nrow(residuals) == 0) {
+    message("[calibrate] wnba_sd: no joinable clv_log/game_outcomes rows yet")
+    return(invisible(FALSE))
+  }
+
+  applied <- FALSE
+  for (mkt in c("totals", "spreads")) {
+    row <- filter(residuals, market == mkt)
+    if (nrow(row) == 0) next
+
+    param   <- if (mkt == "totals") "wnba_total_sd" else "wnba_spread_sd"
+    default <- if (mkt == "totals") 8.0 else 5.0
+
+    if (row$n[1] < min_n) {
+      message(sprintf("[calibrate] wnba_sd/%s: n=%d < min_n=%d — skipping", mkt, row$n[1], min_n))
+      next
+    }
+
+    current <- tryCatch({
+      v <- dbGetQuery(con, "SELECT value FROM model_config WHERE param = ?", list(param))$value[1]
+      if (is.null(v) || is.na(v)) default else v
+    }, error = \(e) default)
+
+    new_sd <- row$sd[1]
+    delta  <- new_sd - current
+    if (abs(delta) > max_delta) {
+      new_sd <- current + sign(delta) * max_delta
+      message(sprintf("[calibrate] wnba_sd/%s: capping delta to %.1f → %.2f", mkt, max_delta, new_sd))
+    }
+
+    .set_config_param(
+      con, param, new_sd,
+      n_games = row$n[1],
+      notes = sprintf("empirical SD of (model_line - actual), mean_residual=%.2f (bias check)",
+                      row$mean_residual[1])
+    )
+    applied <- TRUE
+  }
+
+  invisible(applied)
+}
+
 # ── Morning orchestrator ──────────────────────────────────────────────────────
 
 # Called from run_pipeline.R during SETTLE_HOUR step (morning calibration).
@@ -528,6 +627,7 @@ calibrate_mispricing_run <- function(con, creds = NULL, send_alert = FALSE) {
   }
 
   calibrate_injury_impact(con, min_n = 20L)
+  calibrate_wnba_sd(con)
 
   if (send_alert && !is.null(creds)) {
     new_thr <- tryCatch(

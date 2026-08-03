@@ -115,7 +115,29 @@ section("4. The Odds API")
 library(httr2)
 library(jsonlite)
 
-odds_key <- creds$odds_api_keys[[1]]
+# Find the first working key for WNBA odds endpoint
+odds_key <- NULL
+for (k in creds$odds_api_keys) {
+  test_resp <- tryCatch({
+    request("https://api.the-odds-api.com/v4/sports/basketball_wnba/odds") |>
+      req_url_query(
+        apiKey     = k,
+        regions    = "us,eu",
+        markets    = "spreads,totals",
+        oddsFormat = "american"
+      ) |>
+      req_perform()
+  }, error = function(e) NULL)
+  if (!is.null(test_resp)) {
+    odds_key <- k
+    break
+  }
+}
+
+if (is.null(odds_key)) {
+  # Fall back to first key if none succeeded (so we still assert the error clearly)
+  odds_key <- creds$odds_api_keys[[1]]
+}
 
 check("WNBA sport key exists", {
   resp <- request("https://api.the-odds-api.com/v4/sports") |>
@@ -139,7 +161,7 @@ odds_data <- check("WNBA odds endpoint returns data", {
       markets    = "spreads,totals",
       oddsFormat = "american"
     ) |>
-    req_perform()
+      req_perform()
   remaining <- resp_header(resp, "x-requests-remaining")
   cat(sprintf("     x-requests-remaining: %s\n", remaining %||% "N/A"))
   data <- resp_body_json(resp, simplifyVector = FALSE)

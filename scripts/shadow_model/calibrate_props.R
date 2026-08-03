@@ -183,7 +183,7 @@ calibrate_prop_sd_run <- function(con) {
 
 MIN_N_APPLY_PROP_SKEW <- 500L
 MAX_SKEW_DELTA        <- 0.15
-SKEW_CLAMP            <- c(-0.9, 0.9)
+SKEW_CLAMP            <- c(-0.75, 0.75)
 
 #' Guardrailed upsert of wnba_prop_skew_{pts,reb,ast,pra} to model_config.
 calibrate_prop_skew <- function(con, min_n = MIN_N_APPLY_PROP_SKEW, max_delta = MAX_SKEW_DELTA) {
@@ -202,8 +202,13 @@ calibrate_prop_skew <- function(con, min_n = MIN_N_APPLY_PROP_SKEW, max_delta = 
     default <- 0.0
 
     if (row$n[1] < min_n) {
-      message(sprintf("[calibrate] prop_skew/%s: n=%d < min_n=%d -- skipping",
+      message(sprintf("[calibrate] prop_skew/%s: n=%d < min_n=%d -- defaulting to 0.0 (symmetric normal)",
                       stat, row$n[1], min_n))
+      .set_config_param(
+        con, param, default,
+        n_games = row$n[1],
+        notes = "insufficient n, defaulted to 0.0"
+      )
       next
     }
 

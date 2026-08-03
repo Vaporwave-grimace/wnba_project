@@ -123,6 +123,67 @@ ggsave(file.path(REPORTS_DIR, "calibration_curve.png"),
        p_cal, width = 10, height = 5, dpi = 150)
 message("Calibration curve saved: reports/calibration_curve.png")
 
+# ── Residual bias over time ───────────────────────────────────────────────────
+# model_line - actual, binned weekly. Distinct from the calibration curve above
+# (which checks whether predictions track outcomes across the *range* of
+# predictions) -- this checks whether the model's error has a persistent
+# directional lean over *time*, and whether that lean is growing, shrinking,
+# or holding steady as more games accumulate. Investigated 2026-07-25: overall
+# mean_residual (-2.2 to -2.5 pts) was not statistically distinguishable from
+# zero at n~100/market (95% CI spanned zero both markets) -- not corrected,
+# since doing so on noise would bake in a fake bias. This trend is how that
+# conclusion gets checked as more data comes in, rather than re-running a
+# one-off t-test by hand each time.
+bias_trend <- clv_outcomes |>
+  mutate(week = floor_date(logged_at, "week")) |>
+  group_by(market, week) |>
+  summarise(
+    n             = n(),
+    mean_residual = mean(residual, na.rm = TRUE),
+    se            = sd(residual, na.rm = TRUE) / sqrt(n()),
+    .groups       = "drop"
+  ) |>
+  mutate(
+    ci_lo = mean_residual - 1.96 * se,
+    ci_hi = mean_residual + 1.96 * se
+  )
+
+p_bias <- ggplot(bias_trend, aes(x = week, y = mean_residual, colour = market)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi, fill = market), alpha = 0.15, colour = NA) +
+  geom_line(linewidth = 1) +
+  geom_point(aes(size = n)) +
+  labs(
+    title    = "WNBA Shadow Model — Residual Bias Over Time",
+    subtitle = "model_line - actual, weekly mean ± 95% CI. Ribbon crossing zero = not significant.",
+    x        = NULL,
+    y        = "Mean residual (pts)",
+    colour   = "Market", fill = "Market", size = "Games"
+  ) +
+  theme_minimal(base_size = 13)
+
+ggsave(file.path(REPORTS_DIR, "residual_bias_trend.png"),
+       p_bias, width = 10, height = 5, dpi = 150)
+message("Residual bias trend saved: reports/residual_bias_trend.png")
+
+# Overall (not just weekly) significance per market — same t-test as the
+# manual check, but reproduced here so it's part of the saved report going
+# forward instead of a one-off.
+residual_bias <- clv_outcomes |>
+  group_by(market) |>
+  summarise(
+    n             = n(),
+    mean_residual = mean(residual, na.rm = TRUE),
+    p_value       = tryCatch(t.test(residual)$p.value, error = \(e) NA_real_),
+    ci_lo         = tryCatch(t.test(residual)$conf.int[1], error = \(e) NA_real_),
+    ci_hi         = tryCatch(t.test(residual)$conf.int[2], error = \(e) NA_real_),
+    .groups       = "drop"
+  ) |>
+  mutate(significant = !is.na(p_value) & p_value < 0.05 & sign(ci_lo) == sign(ci_hi))
+
+message("\n── Residual Bias (overall, per market) ────────────────────────────")
+print(residual_bias)
+
 # ── CLV over time ─────────────────────────────────────────────────────────────
 
 p_clv <- clv |>
@@ -169,7 +230,9 @@ report <- list(
   blindspots    = blindspots,
   residual_rmse = clv_outcomes |>
     group_by(market) |>
-    summarise(rmse = sqrt(mean(residual^2, na.rm = TRUE)), .groups = "drop")
+    summarise(rmse = sqrt(mean(residual^2, na.rm = TRUE)), .groups = "drop"),
+  residual_bias       = residual_bias,
+  residual_bias_trend = bias_trend
 )
 
 saveRDS(report, file.path(REPORTS_DIR, "calibration_report.rds"))

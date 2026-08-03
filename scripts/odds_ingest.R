@@ -90,30 +90,119 @@ key_state <- local({
   )
 })
 
+# ── Dead-key alerting ──────────────────────────────────────────────────────────
+# Mirrors mlb_NRFI_YRFI/scripts/engine.R's .alert_odds_api_dead_key() (added
+# there after a key sat silently dead for 11 days, 2026-06-28 to 07-09, with
+# zero alert). WNBA's odds_request() already rotates across a 10-key pool on
+# any failure, but previously had no alerting at all -- a key silently dying
+# would just mean quieter, unexplained rotation until every key was dead, at
+# which point the whole steam/mispricing pipeline goes blind with a single
+# terse stop(). Added 2026-07-25 after the same failure class hit bet_router's
+# Node-side single-key path (watch/verifier.js) with no warning either.
+.odds_api_alerted_keys <- new.env(parent = emptyenv())
+
+#' Alert once per run when an Odds API key looks dead (401/403).
+.alert_odds_api_dead_key <- function(status_code, key, body, total_keys) {
+  key_tag <- substr(key, 1, 6)
+  if (!is.null(.odds_api_alerted_keys[[key_tag]])) return(invisible())
+  assign(key_tag, TRUE, envir = .odds_api_alerted_keys)
+
+  reason <- tryCatch(body$message %||% body$error_code %||% "unknown", error = function(e) "unknown")
+  msg <- sprintf(
+    paste0("⚠️ *WNBA Odds API key needs attention*\n",
+           "HTTP %d on api.the-odds-api.com — key `%s...`\n",
+           "Reason: %s\n",
+           "Check/replace this key in `odds_api_keys` (wnba_project/scripts/credentials.json). ",
+           "%d of %d key(s) flagged dead this run."),
+    status_code, key_tag, reason,
+    length(ls(.odds_api_alerted_keys)), total_keys
+  )
+  tryCatch({
+    creds <- load_credentials()
+    send_telegram(msg, creds)
+  }, error = function(e) NULL)
+}
+
+#' Alert when every key in the rotation pool has failed this run — the whole
+#' steam/mispricing pipeline is blind to real odds until this is fixed.
+.alert_odds_api_pool_exhausted <- function(total_keys) {
+  msg <- sprintf(
+    paste0("🚨 *WNBA Odds API — entire key pool exhausted*\n",
+           "All %d key(s) in `odds_api_keys` failed this run. ",
+           "Steam detection and the mispricing model have no odds data until this is fixed."),
+    total_keys
+  )
+  tryCatch({
+    creds <- load_credentials()
+    send_telegram(msg, creds)
+  }, error = function(e) NULL)
+}
+
 # ── Base Request ──────────────────────────────────────────────────────────────
 
 odds_request <- function(path, params = list()) {
-  params$apiKey <- key_state$current()
+  # Get number of keys available to limit retry count
+  max_attempts <- 10L
+  tryCatch({
+    creds <- load_credentials()
+    if (!is.null(creds$odds_api_keys)) max_attempts <- length(creds$odds_api_keys)
+  }, error = function(e) NULL)
 
-  resp <- request(ODDS_BASE) |>
-    req_url_path_append(path) |>
-    req_url_query(!!!params) |>
-    req_retry(max_tries = 3, backoff = \(i) 2 ^ i) |>
-    req_perform()
+  for (attempt in seq_len(max_attempts)) {
+    params$apiKey <- key_state$current()
+    current_key   <- key_state$current()
 
-  # Track remaining quota from response headers
-  remaining <- resp_header(resp, "x-requests-remaining")
-  if (!is.null(remaining)) key_state$update_remaining(remaining)
+    resp <- tryCatch({
+      request(ODDS_BASE) |>
+        req_url_path_append(path) |>
+        req_url_query(!!!params) |>
+        req_retry(max_tries = 3, backoff = \(i) 2 ^ i) |>
+        req_error(is_error = \(r) FALSE) |>
+        req_perform()
+    }, error = function(e) {
+      message("  ⚠️  Odds API key failure: ", e$message)
+      NULL
+    })
 
-  # Rotate proactively if running low
-  r <- as.integer(remaining %||% Inf)
-  if (!is.na(r) && r < 5L) {
-    message("Key running low (", r, " remaining). Rotating.")
-    key_state$rotate()
+    if (!is.null(resp)) {
+      status <- resp_status(resp)
+
+      if (status %in% c(401L, 403L)) {
+        body <- tryCatch(resp_body_json(resp), error = function(e) list())
+        .alert_odds_api_dead_key(status, current_key, body, max_attempts)
+        message("Rotating key index due to auth failure (HTTP ", status, ")...")
+        key_state$rotate(threshold = -1L)
+        next
+      }
+
+      if (status >= 400L) {
+        message("  ⚠️  Odds API HTTP ", status, " — rotating and retrying")
+        key_state$rotate(threshold = -1L)
+        next
+      }
+
+      # Track remaining quota from response headers
+      remaining <- resp_header(resp, "x-requests-remaining")
+      if (!is.null(remaining)) key_state$update_remaining(remaining)
+
+      # Rotate proactively if running low
+      r <- as.integer(remaining %||% Inf)
+      if (!is.na(r) && r < 5L) {
+        message("Key running low (", r, " remaining). Rotating.")
+        key_state$rotate()
+      }
+      return(resp)
+    }
+
+    # Network-level failure (no response at all) — rotate to the next key and retry
+    message("Rotating key index due to request failure...")
+    key_state$rotate(threshold = -1L)
   }
 
-  resp
+  .alert_odds_api_pool_exhausted(max_attempts)
+  stop("All Odds API keys failed or returned unauthorized/errors.")
 }
+
 
 # ── Fetch Odds ────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,19 @@
+Re-run the WNBA shadow model's calibration report and compare its residual-bias trend against last week's baseline.
+
+Context: G:\My Drive\Scripting Projects\wnba_project is an R-based WNBA sports betting model pipeline. On 2026-07-25, a residual-bias tracking feature was added to scripts/shadow_model/calibrate.R -- it computes model_line minus actual outcome (totals and spreads markets), both as an overall t-test and as a weekly-binned trend with 95% CI, and saves both into reports/calibration_report.rds ($residual_bias and $residual_bias_trend) plus a chart at reports/residual_bias_trend.png. At that time: totals mean_residual=-2.23 (p=0.268, 95% CI [-6.21,1.74], not significant, n=103); spreads mean_residual=-2.49 (p=0.129, 95% CI [-5.72,0.74], not significant, n=98). The trend showed the bias swinging noisily week to week rather than holding a stable direction, which was the basis for NOT correcting the model for it.
+
+A dated snapshot of that baseline run is saved at reports/calibration_report_2026-07-25.rds -- use it as the "before" for comparison; do not regenerate or overwrite it.
+
+Task:
+1. cd "G:\My Drive\Scripting Projects\wnba_project" and run: Rscript scripts/shadow_model/calibrate.R
+   (requires R with dplyr/tidyr/ggplot2/DBI/RSQLite/lubridate/here installed, and readable access to C:/Users/Mike/sports_data/wnba_pipeline.sqlite -- if the script errors because there still isn't enough new clv_log/game_outcomes data, or the DB is locked/unreachable, report that plainly rather than guessing at results.)
+2. Load both reports/calibration_report_2026-07-25.rds (before) and the freshly regenerated reports/calibration_report.rds (after) with readRDS().
+3. Compare, per market (totals, spreads):
+   - Sample size growth ($residual_bias$n)
+   - Whether mean_residual moved toward zero, away from zero, or flipped sign
+   - Whether $residual_bias$significant flipped from FALSE to TRUE (or vice versa) -- this is the headline question
+   - Whether the weekly trend ($residual_bias_trend) looks more stable/consistent now, or still noisy/oscillating like before
+4. Write a concise comparison (plain markdown, under 400 words) to reports/bias_trend_comparison_2026-08-01.md covering: what changed, whether the "don't correct for this" call from 2026-07-25 still holds, and if not, what a fix would need to look like (this is a decision to flag, not one to implement -- do not modify calibrate.R, bet_alerts.R, or calibrate_mispricing.R in this run).
+5. Also print the comparison as your final response text, not just the file, so it's visible without opening the file.
+
+Do not commit anything to git (this is not a git repo). Do not modify any pipeline code -- this is a read-only analysis + one new markdown file.

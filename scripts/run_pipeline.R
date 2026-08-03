@@ -43,7 +43,7 @@ source(here("scripts", "wnba_settle.R"))
 
 TZ_LOCAL        <- "America/New_York"
 SETTLE_HOUR     <- 10L   # 10:00 AM ET — settlement + on/off refresh (no odds)
-OPEN_HOUR       <- 11L   # 11:30 AM ET / 9:30 AM MT — Wave 1: opener odds snapshot & early soft-line alerts
+OPEN_HOUR       <- 12L   # 12:30 PM ET / 10:30 AM MT — Wave 1: opener odds snapshot & early soft-line alerts
 MIDDAY_HOUR     <- 16L   # 4:30 PM ET / 2:30 PM MT — Wave 2: afternoon re-run against confirmed injuries & steam
 PRE_TIP_MINS    <- 70L   # minutes before tip-off to take closing snapshot
 SEASON          <- as.integer(format(Sys.Date(), "%Y"))

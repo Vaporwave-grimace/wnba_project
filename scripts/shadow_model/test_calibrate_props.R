@@ -259,7 +259,7 @@ check("calibrate_prop_skew applies pts skew when n >= MIN_N_APPLY_PROP_SKEW", {
   applied <- calibrate_prop_skew(con3, min_n = 3L, max_delta = 2.0)
   stopifnot(isTRUE(applied))
   v <- dbGetQuery(con3, "SELECT value FROM model_config WHERE param = 'wnba_prop_skew_pts'")$value
-  stopifnot(length(v) == 1, abs(v - 0.9) < 1e-6)   # 1.073313 clamped to the 0.9 ceiling
+  stopifnot(length(v) == 1, abs(v - 0.75) < 1e-6)   # 1.073313 clamped to the 0.75 ceiling
 })
 check("calibrate_prop_skew skips when min_n is set above the available sample", {
   applied <- calibrate_prop_skew(con3, min_n = 100000L, max_delta = 2.0)

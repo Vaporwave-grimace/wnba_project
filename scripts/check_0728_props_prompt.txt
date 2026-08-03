@@ -1,0 +1,23 @@
+Check whether WNBA player prop lines have posted for the 2026-07-28 slate, and re-check injury report freshness for those teams.
+
+Context: G:\My Drive\Scripting Projects\wnba_project is an R-based WNBA sports betting model pipeline. Its local SQLite DB is at C:/Users/Mike/sports_data/wnba_pipeline.sqlite. On 2026-07-25, a health check of the real 2026-07-28 evening slate (5 games, US-evening local time -- note commence_time is stored in UTC, so query with a UTC window like commence_time >= '2026-07-28T04:00:00Z' AND < '2026-07-29T04:00:00Z', NOT a naive DATE(commence_time)='2026-07-28' filter, which misses games that fall after midnight UTC) found:
+  - Team-level lines (h2h/spreads/totals) solid: 15-16 books per market across all 5 games.
+  - Zero player prop lines posted yet for any of the 5 games (player_prop_lines table had 0 rows for all 5 game_ids) -- expected, since WNBA books typically post props ~3PM ET the day before a game (2026-07-27 afternoon for this slate), not this far out.
+  - Injury reports last refreshed 2026-07-23 (2 days stale at check time). Connecticut Sun (playing Washington Mystics in this slate) had 3 significant players "Out" as of that report: Brittney Griner, Hailey Van Lith, Aaliyah Edwards.
+
+The 5 games (game_id, home, away, commence_time UTC):
+  e4dc370d08264200533bf3816f82c622 | Washington Mystics | Connecticut Sun | 2026-07-28T23:30:00Z
+  786c1161bd8d7bbab01efa2e850df8bb | Minnesota Lynx | Toronto Tempo | 2026-07-29T00:00:00Z
+  c2e520af9bd7e828a76959862d941068 | Seattle Storm | Indiana Fever | 2026-07-29T01:30:00Z
+  606c87e74c7cc6048113e44a4f33506f | Las Vegas Aces | Portland Fire | 2026-07-29T02:00:00Z
+  fa632e2d144f67960024500509077a4a | Los Angeles Sparks | New York Liberty | 2026-07-29T02:00:00Z
+(Query game_ids fresh from the `games` table using the UTC window above rather than trusting this list is still complete/unchanged -- postponements or reschedules are possible.)
+
+Task:
+1. Query player_prop_lines for these 5 game_ids (or the freshly-queried equivalent). For each game, report: how many distinct players have prop lines, which markets (player_points/player_rebounds/player_assists/player_points_rebounds_assists), and the most recent pulled_at.
+2. If a game still has zero prop lines, don't treat that alone as a bug yet -- check whether OTHER games in the slate DO have props; if some do and others don't, that's a real gap worth flagging (e.g. one specific game_id never got fetched). If literally none of the 5 have props by the time this runs (the evening of 2026-07-27 or later), that's worth flagging as a real concern, since the ~3PM ET day-before window should have passed.
+3. Re-check injury_reports freshness (MAX(reported_at) across the whole table, and specifically for Connecticut Sun and Washington Mystics) -- has it updated past 2026-07-23? Are Griner/Van Lith/Edwards still listed Out, or has anything changed?
+4. Spot-check team_def_factors and on_off_net_rating are still refreshing daily (MAX(updated_at) / MAX(computed_at) should be within the last day when this runs) -- these feed the shadow model's prop/totals projections.
+5. Report findings directly as your final response text -- a concise summary (bullets fine), not a saved file this time. Flag anything that looks like a real gap (a specific game missing data others have, stale injury data close to game time, a dead calibration feed) versus normal pre-game timing.
+
+This is read-only investigation -- do not modify any pipeline code, do not fire any bets, do not modify credentials.json. Do not commit anything to git (this is not a git repo).

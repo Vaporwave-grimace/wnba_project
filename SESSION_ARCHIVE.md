@@ -1,15 +1,29 @@
 # WNBA Sandbox Intelligence Pipeline — Session Archive
+Last updated: 2026-07-31
 
-Historical session-by-session narratives, moved out of `CLAUDE.md` to keep that
-file lean. Open this only if you need historical context on why something is
-built the way it is. Current living state (Stack, Data Sources, Build Status,
-Current State Note, and the most recent 1-2 sessions) lives in `CLAUDE.md`.
+This file is **cold storage** for session narrative history and audit logs.
+It is **not** loaded automatically during normal sessions to preserve context window capacity.
+Open or read this file only when explicitly tracing historical decisions or debugging regressions.
 
-Sessions newest-first.
+For current pipeline state, see [`CLAUDE.md`](CLAUDE.md).
+
+Sessions are ordered newest-first.
+
+---
+## Session 7 (2026-07-31 — Prop Skew Calibration & Ingestion Guardrails)
+
+### `scripts/shadow_model/calibrate_props.R`
+- **Low-Sample Fallback Gate:** Updated `calibrate_prop_skew()` to set explicit default parameter `wnba_prop_skew_{stat} = 0.0` (pure symmetric normal via `pnorm()`) when sample size $n < 500$, avoiding uninitialized/skipped parameter states.
+- **Skew Parameter Clamping:** Enforced strict interval bounds $[-0.75, 0.75]$ on empirical residual skewness $\gamma_1$.
+
+### Ingestion & Directional Validation (`scripts/bet_alerts.R`)
+- **SQL Ingestion Guards:** Verified `player_name IS NOT NULL` and `player_name NOT IN ('Unknown Player', '', ' ')` filtering on API lines.
+- **Directional Predicate Enforcement:** Confirmed strict directional validation: OVER alerts require $\text{AI Proj} > \text{Line}$; UNDER alerts require $\text{AI Proj} < \text{Line}$, dropping upside-down plays on plus-money lines.
+- **Correlation Collapse:** Confirmed single-player prop edge collapse via `.collapse_correlated_prop_edges()` to yield a maximum of 1 alert per player per slate.
 
 ---
 
-## Session Summary (2026-06-23, Session 6 — OddsPortal Backfill + Model Retraining)
+## Session 6 (2026-06-23 — OddsPortal Backfill + Model Retraining)
 
 ### `scripts/oddsportal_scraper.R` (new)
 
@@ -54,7 +68,7 @@ Both XGBoost models retrained with `closing_line` populated for 748/978 games:
 
 ---
 
-## Session Summary (2026-06-20, Session 5 — Steam Timing + Alert Fixes)
+## Session 5 (2026-06-20 — Steam Timing + Alert Fixes)
 
 ### `scripts/run_pipeline.R` — Collection window timing fix
 
@@ -106,7 +120,7 @@ Root cause of 22 ERR on Jun 16-17: `send_telegram` used `req_perform()` without 
 - All prior blockers resolved — see Recent Session Summary below.
 - Next focus: steam detection quality (0 flags despite live action — check threshold calibration and whether line movement data is populating); shadow model predictions logging against closing lines for CLV tracking.
 
-## Session Summary (2026-06-19, Session 4 — Cross-Pipeline Integration)
+## Session 4 (2026-06-19 — Cross-Pipeline Integration)
 
 ### `scripts/wnba_settle.R` (new)
 
@@ -123,7 +137,7 @@ Manual run: `wnba_settle_run(con, days_from=3L)` → 8 new games written; table 
 
 ---
 
-## Recent Session Summary (2026-06-14, Session 3)
+## Session 3 (2026-06-14)
 
 - **CLV tracking wired up** — steam flags now write to `clv_log` as simulated bet entries; closing snapshot settles open entries and computes directional CLV
   - `record_clv_entry(steam_df, con)` in `odds_ingest.R` — logs current (post-steam) Pinnacle-first line as `model_line`; idempotent (skips if already logged for that game/market/side); stores `steam_direction` for correct sign convention
@@ -134,7 +148,7 @@ Manual run: `wnba_settle_run(con, days_from=3L)` → 8 new games written; table 
 - **Data flow:** steam fires → entry logged at current line → closing snapshot captured pre-tip → CLV settled; all in `clv_log`
 - **Note:** CLV accumulates only when steam is detected; zero-steam days produce no entries (correct — no signal, no simulated bet)
 
-## Previous Session Summary (2026-06-14, Session 2)
+## Session 2 (2026-06-14)
 
 - **Heartbeat message overhauled** — replaced count-only summary with actionable data:
   - **Game slate:** shows each matchup (Away @ Home), tip time ET, favored team + spread, o/u total pulled from latest snapshot (Pinnacle-first book preference)
@@ -143,7 +157,7 @@ Manual run: `wnba_settle_run(con, days_from=3L)` → 8 new games written; table 
   - Zero-count sections collapse to a single "No X today" line
 - Change in `scripts/run_pipeline.R` — summary block at bottom (~lines 287+)
 
-## Previous Session Summary (2026-06-14)
+## Session (2026-06-14)
 
 - **R path in `.bat` fixed** and `setup_schedule.ps1` re-run to re-register Task Scheduler with correct path
 - **`now_et()` forward reference** resolved in `run_pipeline.R`
@@ -152,12 +166,12 @@ Manual run: `wnba_settle_run(con, days_from=3L)` → 8 new games written; table 
 - **Telegram confirmed:** `🏀 WNBA Pipeline | Jun 14 04:04 PM ET | 📊 Games: 6 | 🔥 Steam: 0 | 🩹 Injuries: 0`
 - Next: investigate 0 steam flags with 6 live games — check `Steam_Movements` threshold and odds API line history population
 
-## Previous Session Summary (2026-06-06)
+## Session (2026-06-06)
 
 - Silent Telegram heartbeat flagged (no output 6/4–6/6); root cause not identified; diagnostics deferred
 - No code changes made
 
-## Session Summary (2026-06-02)
+## Session (2026-06-02)
 
 - **`run_pipeline.R` Telegram heartbeat added:** every 30-minute pipeline invocation now sends a summary to `@LBA_Betting_Intel_Bot` with games tracked, steam flags, and injury updates; steam and injury alerts still fire immediately on detection; heartbeat fires at end of each run
 - **`setup_schedule.ps1` fixed:** two bugs corrected — (1) execution policy: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` then `powershell -ExecutionPolicy Bypass` workaround; (2) trigger repetition: `-Once` with `-RepetitionInterval` is the correct syntax for repeating scheduled tasks on Windows (not `-Daily` + `.Repetition.Interval` property assignment which doesn't work)
@@ -165,7 +179,7 @@ Manual run: `wnba_settle_run(con, days_from=3L)` → 8 new games written; table 
 - **First pipeline run confirmed:** `Start-ScheduledTask -TaskName "WNBA Pipeline"` fired; Telegram confirmed: "🏀 WNBA Pipeline | Jun 02 12:18 PM ET | 📊 Games: 0 | 🔥 Steam: 0 | 🩹 Injuries: 0" — zeros expected on first run (opener snapshot fires at 9 AM ET, run was post-window; baselines established for future delta comparisons)
 - Next: debug silent Telegram (no output 6/4+); verify Task Scheduler still firing; check games query for date logic
 
-## Previous Session Summary (2026-06-01)
+## Session (2026-06-01)
 
 - `seed.R` re-run with 15-minute bench threshold for on/off splits: 838 game outcomes, 1676 game log rows, 34 on/off rows across 2023/2024/2025 seasons; expansion teams and teams with <2 bench splits warned but handled via median imputation
 - `train.R` fixed (type mismatch on `home_team_id` join, `collect_metrics` `.estimate` vs `mean` in tidymodels 1.5, deprecated `grid_latin_hypercube` replaced with `grid_space_filling`); both models trained successfully
