@@ -1,6 +1,6 @@
 # WNBA Prop Skew-Normal Distribution Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace `pnorm()` with a skew-normal CDF (`sn::psn()`) for prop
 `model_prob`, with skew empirically calibrated per stat and a pnorm-identical

@@ -16,7 +16,7 @@ source(here::here("scripts", "shadow_model", "player_props.R"))
 WNBA_EXPORTS_DIR <- here::here("exports")
 
 # Minimum EV% to fire an alert
-MIN_EV_PCT <- 3.0
+MIN_EV_PCT <- 4.5  # raised from 3.0 — eliminate low-confidence picks; 3-5pt bucket 0% ATS
 
 # Assumed scoring SDs for model_prob approximation via normal CDF. These are
 # now calibrated (2026-07-24, shadow_model/calibrate_mispricing.R's
@@ -411,6 +411,25 @@ emit_wnba_bet_alert <- function(game_id, market, side, model_line, mkt_line,
                     game_id, market, side, ev_pct %||% 0, MIN_EV_PCT))
     return(invisible(list(message = NULL, model_prob = model_prob, ev_pct = ev_pct,
                           kelly = kelly, fired = FALSE)))
+  }
+
+  # ── Edge Bucket Gate (totals only) ────────────────────────────────────────────
+  # Blacklist poorly-performing edge ranges. 3-5pt bucket: 0% ATS (n=3).
+  # Only fire 0-2pt (58% ATS, strong signal) and 2-3pt (35% ATS, needs study).
+  if (market == "total") {
+    odds_diff <- abs(bo$odds - fair_odds)
+    edge_bucket <- if (odds_diff < 200) "0-2"
+                   else if (odds_diff < 300) "2-3"
+                   else if (odds_diff < 500) "3-5"
+                   else if (odds_diff < 700) "5-7"
+                   else "7+"
+
+    if (!edge_bucket %in% c("0-2", "2-3")) {
+      message(sprintf("[bet_alerts/WNBA] %s %s — edge_bucket=%s excluded (historical poor ATS)",
+                      game_id, side, edge_bucket))
+      return(invisible(list(message = NULL, model_prob = model_prob, ev_pct = ev_pct,
+                            kelly = kelly, fired = FALSE)))
+    }
   }
 
   # ── Directional Validation Guard ──────────────────────────────────────────────

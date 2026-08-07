@@ -1,6 +1,6 @@
 # WNBA Props Devig/Consensus-Line/Book-Depth Patch Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix three compounding bugs inflating WNBA player-prop EV (no devig, no
 consensus-line filter, no book-depth requirement) in `scripts/bet_alerts.R`, with

@@ -289,6 +289,17 @@ fetch_player_prop_odds <- function(con, game_ids, snapshot_type = "midday") {
     return(invisible(odds_df))
   }
 
+  odds_df <- odds_df |>
+    dplyr::filter(!is.na(player_name),
+                  !is.na(price),
+                  !is.na(point),
+                  !trimws(player_name) %in% c("", "Unknown Player", "Unknown", "N/A"))
+
+  if (nrow(odds_df) == 0) {
+    message("[player_props] No valid player prop rows after filtering.")
+    return(invisible(odds_df))
+  }
+
   for (i in seq_len(nrow(odds_df))) {
     row <- odds_df[i, ]
     dbExecute(con, "

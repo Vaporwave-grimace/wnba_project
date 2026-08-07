@@ -1,0 +1,103 @@
+"away_team","home_team","game_date","bet_side","kelly_fraction","bet_amount"
+"New York Liberty","Indiana Fever","2026-07-18","Aliyah Boston Over 2.5 AST",0.0885,8.85
+"New York Liberty","Indiana Fever","2026-07-18","Kelsey Mitchell Over 2.5 AST",0.0622,6.22
+"New York Liberty","Indiana Fever","2026-07-18","Sabrina Ionescu Under 5.5 AST",0.1,10
+"New York Liberty","Indiana Fever","2026-07-18","Aliyah Boston Over 16.5 PTS",0.0189,1.89
+"New York Liberty","Indiana Fever","2026-07-18","Breanna Stewart Over 20.5 PTS",0.093,9.3
+"New York Liberty","Indiana Fever","2026-07-18","Jonquel Jones Over 14.5 PTS",0.0786,7.86
+"New York Liberty","Indiana Fever","2026-07-18","Kelsey Mitchell Over 22.5 PTS",0.1,10
+"New York Liberty","Indiana Fever","2026-07-18","Aliyah Boston Over 27.5 PRA",0.0552,5.52
+"New York Liberty","Indiana Fever","2026-07-18","Breanna Stewart Over 31.5 PRA",0.0317,3.17
+"New York Liberty","Indiana Fever","2026-07-18","Caitlin Clark Under 30.5 PRA",0.0196,1.96
+"New York Liberty","Indiana Fever","2026-07-18","Jonquel Jones Over 25.5 PRA",0.077,7.7
+"New York Liberty","Indiana Fever","2026-07-18","Kelsey Mitchell Over 27.5 PRA",0.1,10
+"New York Liberty","Indiana Fever","2026-07-18","Sabrina Ionescu Under 26.5 PRA",0.0358,3.58
+"New York Liberty","Indiana Fever","2026-07-18","Aliyah Boston Over 8.5 REB",0.0376,3.76
+"New York Liberty","Indiana Fever","2026-07-18","Caitlin Clark Under 3.5 REB",0.0532,5.32
+"New York Liberty","Indiana Fever","2026-07-18","Marine Johannes Under 7.5 PTS",0.0727,7.27
+"New York Liberty","Indiana Fever","2026-07-18","Pauline Astier Under 9.5 PTS",0.0302,3.02
+"New York Liberty","Indiana Fever","2026-07-18","Pauline Astier Under 15.5 PRA",0.065,6.5
+"New York Liberty","Indiana Fever","2026-07-18","Monique Billings Under 5.5 REB",0.0575,5.75
+"Washington Mystics","Golden State Valkyries","2026-07-18","Gabby Williams Under 2.5 AST",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Shakira Austin Under 2.5 AST",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Sonia Citron Over 2.5 AST",0.0366,3.66
+"Washington Mystics","Golden State Valkyries","2026-07-18","Veronica Burton Under 4.5 AST",0.0292,2.92
+"Washington Mystics","Golden State Valkyries","2026-07-18","Georgia Amoore Over 5.5 PTS",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Kaitlyn Chen Over 7.5 PTS",0.0597,5.97
+"Washington Mystics","Golden State Valkyries","2026-07-18","Kayla Thornton Under 7.5 PTS",0.0736,7.36
+"Washington Mystics","Golden State Valkyries","2026-07-18","Kiki Iriafen Over 13.5 PTS",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Sonia Citron Over 14.5 PTS",0.0931,9.31
+"Washington Mystics","Golden State Valkyries","2026-07-18","Veronica Burton Under 11.5 PTS",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Gabby Williams Under 18.5 PRA",0.0462,4.62
+"Washington Mystics","Golden State Valkyries","2026-07-18","Kiki Iriafen Over 24.5 PRA",0.0901,9.01
+"Washington Mystics","Golden State Valkyries","2026-07-18","Shakira Austin Under 24.5 PRA",0.0217,2.17
+"Washington Mystics","Golden State Valkyries","2026-07-18","Sonia Citron Over 21.5 PRA",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Veronica Burton Under 19.5 PRA",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Kayla Thornton Under 4.5 REB",0.0612,6.12
+"Washington Mystics","Golden State Valkyries","2026-07-18","Kiki Iriafen Over 9.5 REB",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Shakira Austin Over 8.5 REB",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Sonia Citron Over 3.5 REB",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Cecilia Zandalasini Over 7.5 PTS",0.0998,9.98
+"Washington Mystics","Golden State Valkyries","2026-07-18","Georgia Amoore Over 10.5 PRA",0.0534,5.34
+"Portland Fire","Minnesota Lynx","2026-07-18","Bridget Carleton Under 2.5 AST",0.0876,8.76
+"Portland Fire","Minnesota Lynx","2026-07-18","Carla Leite Over 5.5 AST",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Courtney Williams Over 3.5 AST",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Emily Engstler Over 2.5 AST",0.0897,8.97
+"Portland Fire","Minnesota Lynx","2026-07-18","Kayla McBride Over 2.5 AST",0.0409,4.09
+"Portland Fire","Minnesota Lynx","2026-07-18","Natasha Howard Over 2.5 AST",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Nia Coffey Over 2.5 AST",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Olivia Miles Over 5.5 AST",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Carla Leite Over 13.5 PTS",0.0664,6.64
+"Portland Fire","Minnesota Lynx","2026-07-18","Courtney Williams Under 15.5 PTS",0.025,2.5
+"Portland Fire","Minnesota Lynx","2026-07-18","Emily Engstler Under 9.5 PTS",0.0195,1.95
+"Portland Fire","Minnesota Lynx","2026-07-18","Kayla McBride Over 17.5 PTS",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Nia Coffey Under 8.5 PTS",0.0224,2.24
+"Portland Fire","Minnesota Lynx","2026-07-18","Olivia Miles Over 17.5 PTS",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Sarah Ashlee Barker Over 9.5 PTS",0.0887,8.87
+"Portland Fire","Minnesota Lynx","2026-07-18","Serah Williams Under 8.5 PTS",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Carla Leite Over 21.5 PRA",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Kayla McBride Over 23.5 PRA",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Natasha Howard Over 27.5 PRA",0.0231,2.31
+"Portland Fire","Minnesota Lynx","2026-07-18","Olivia Miles Over 27.5 PRA",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Sarah Ashlee Barker Over 16.5 PRA",0.04,4
+"Portland Fire","Minnesota Lynx","2026-07-18","Bridget Carleton Over 3.5 REB",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Carla Leite Over 2.5 REB",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Courtney Williams Over 5.5 REB",0.0813,8.13
+"Portland Fire","Minnesota Lynx","2026-07-18","Emily Engstler Over 5.5 REB",0.0533,5.33
+"Portland Fire","Minnesota Lynx","2026-07-18","Natasha Howard Over 7.5 REB",0.0309,3.09
+"Portland Fire","Minnesota Lynx","2026-07-18","Sarah Ashlee Barker Under 4.5 REB",0.0212,2.12
+"Portland Fire","Minnesota Lynx","2026-07-18","Serah Williams Under 5.5 REB",0.1,10
+"New York Liberty","Indiana Fever","2026-07-18","Kelsey Mitchell Over 21.5 PTS",0.1,10
+"New York Liberty","Indiana Fever","2026-07-18","Kelsey Mitchell Under 2.5 REB",0.062,6.2
+"New York Liberty","Indiana Fever","2026-07-18","Sophie Cunningham Under 2.5 REB",0.0489,4.89
+"Portland Fire","Minnesota Lynx","2026-07-18","Natasha Howard Under 16.5 PTS",0.0235,2.35
+"Portland Fire","Minnesota Lynx","2026-07-18","Sarah Ashlee Barker Over 8.5 PTS",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Bridget Carleton Over 17.5 PRA",0.0267,2.67
+"Portland Fire","Minnesota Lynx","2026-07-18","Emily Engstler Over 17.5 PRA",0.0209,2.09
+"Portland Fire","Minnesota Lynx","2026-07-18","Bridget Carleton Over 2.5 REB",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Carla Leite Over 1.5 REB",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Sonia Citron Over 20.5 PRA",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Janelle Salaun Under 1.5 AST",0.1,10
+"New York Liberty","Indiana Fever","2026-07-18","Caitlin Clark Under 7.5 AST",0.0693,6.93
+"New York Liberty","Indiana Fever","2026-07-18","Caitlin Clark Over 17.5 PTS",0.0674,6.74
+"New York Liberty","Indiana Fever","2026-07-18","Sabrina Ionescu Over 17.5 PTS",0.0711,7.11
+"New York Liberty","Indiana Fever","2026-07-18","Breanna Stewart Over 32.5 PRA",0.1,10
+"New York Liberty","Indiana Fever","2026-07-18","Jonquel Jones Under 9.5 REB",0.0234,2.34
+"New York Liberty","Indiana Fever","2026-07-18","Sophie Cunningham Under 9.5 PTS",0.0601,6.01
+"Washington Mystics","Golden State Valkyries","2026-07-18","Veronica Burton Over 4.5 AST",0.0786,7.86
+"Washington Mystics","Golden State Valkyries","2026-07-18","Shakira Austin Over 13.5 PTS",0.0167,1.67
+"Washington Mystics","Golden State Valkyries","2026-07-18","Shakira Austin Over 24.5 PRA",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Gabby Williams Under 3.5 REB",0.1,10
+"Washington Mystics","Golden State Valkyries","2026-07-18","Janelle Salaun Under 16.5 PRA",0.0249,2.49
+"Portland Fire","Minnesota Lynx","2026-07-18","Bridget Carleton Over 2.5 AST",0.0244,2.44
+"Portland Fire","Minnesota Lynx","2026-07-18","Kayla McBride Under 2.5 AST",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Bridget Carleton Over 12.5 PTS",0.0492,4.92
+"Portland Fire","Minnesota Lynx","2026-07-18","Nia Coffey Under 15.5 PRA",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Nia Coffey Under 5.5 REB",0.1,10
+"Portland Fire","Minnesota Lynx","2026-07-18","Olivia Miles Over 4.5 REB",0.053,5.3
+"Portland Fire","Minnesota Lynx","2026-07-18","Sarah Ashlee Barker Over 4.5 REB",0.0364,3.64
+"New York Liberty","Indiana Fever","2026-07-18","Aliyah Boston Under 8.5 REB",0.0999,9.99
+"New York Liberty","Indiana Fever","2026-07-18","Breanna Stewart Over 7.5 REB",0.0174,1.74
+"New York Liberty","Indiana Fever","2026-07-18","Sabrina Ionescu Under 3.5 REB",0.0449,4.49
+"Portland Fire","Minnesota Lynx","2026-07-18","Natasha Howard Under 27.5 PRA",0.0914,9.14
+"Portland Fire","Minnesota Lynx","2026-07-18","Kayla McBride Under 3.5 REB",0.0451,4.51

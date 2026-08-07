@@ -1,0 +1,119 @@
+"away_team","home_team","game_date","bet_side","kelly_fraction","bet_amount"
+"Portland Fire","Las Vegas Aces","2026-07-28","A'ja Wilson Under 3.5 AST",0.1,10
+"Portland Fire","Las Vegas Aces","2026-07-28","Bridget Carleton Over 2.5 AST",0.0389,3.89
+"Portland Fire","Las Vegas Aces","2026-07-28","Chelsea Gray Over 6.5 AST",0.1,10
+"Portland Fire","Las Vegas Aces","2026-07-28","A'ja Wilson Under 26.5 PTS",0.0845,8.45
+"Portland Fire","Las Vegas Aces","2026-07-28","Bridget Carleton Over 12.5 PTS",0.0343,3.43
+"Portland Fire","Las Vegas Aces","2026-07-28","Carla Leite Over 15.5 PTS",0.0417,4.17
+"Portland Fire","Las Vegas Aces","2026-07-28","Chelsea Gray Over 11.5 PTS",0.1,10
+"Portland Fire","Las Vegas Aces","2026-07-28","Jackie Young Over 17.5 PTS",0.0364,3.64
+"Portland Fire","Las Vegas Aces","2026-07-28","NaLyssa Smith Over 11.5 PTS",0.0299,2.99
+"Portland Fire","Las Vegas Aces","2026-07-28","A'ja Wilson Under 40.5 PRA",0.1,10
+"Portland Fire","Las Vegas Aces","2026-07-28","Bridget Carleton Over 18.5 PRA",0.0866,8.66
+"Portland Fire","Las Vegas Aces","2026-07-28","Carla Leite Over 24.5 PRA",0.0369,3.69
+"Portland Fire","Las Vegas Aces","2026-07-28","Chelsea Gray Over 22.5 PRA",0.0579,5.79
+"Portland Fire","Las Vegas Aces","2026-07-28","Emily Engstler Over 16.5 PRA",0.0686,6.86
+"Portland Fire","Las Vegas Aces","2026-07-28","NaLyssa Smith Over 17.5 PRA",0.0201,2.01
+"Portland Fire","Las Vegas Aces","2026-07-28","Bridget Carleton Over 3.5 REB",0.1,10
+"Portland Fire","Las Vegas Aces","2026-07-28","Carla Leite Over 2.5 REB",0.0389,3.89
+"Portland Fire","Las Vegas Aces","2026-07-28","Chelsea Gray Under 3.5 REB",0.1,10
+"Portland Fire","Las Vegas Aces","2026-07-28","Emily Engstler Over 5.5 REB",0.0188,1.88
+"Portland Fire","Las Vegas Aces","2026-07-28","Jackie Young Under 3.5 REB",0.0441,4.41
+"Portland Fire","Las Vegas Aces","2026-07-28","Megan DiLeo Over 13.5 PTS",0.1,10
+"Portland Fire","Las Vegas Aces","2026-07-28","Megan DiLeo Over 18.5 PRA",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Courtney Williams Over 3.5 AST",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Isabelle Harrison Under 1.5 AST",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Julie Allemand Over 5.5 AST",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Kayla McBride Under 2.5 AST",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Natasha Howard Over 2.5 AST",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Isabelle Harrison Over 11.5 PTS",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Kayla McBride Over 17.5 PTS",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Marina Mabrey Over 20.5 PTS",0.0745,7.45
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Natasha Howard Under 12.5 PTS",0.0354,3.54
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Olivia Miles Over 17.5 PTS",0.0963,9.63
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Courtney Williams Over 22.5 PRA",0.041,4.1
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Isabelle Harrison Over 20.5 PRA",0.0684,6.84
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Kayla McBride Over 22.5 PRA",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Marina Mabrey Over 26.5 PRA",0.0678,6.78
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Olivia Miles Over 29.5 PRA",0.0882,8.82
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Courtney Williams Over 4.5 REB",0.0461,4.61
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Isabelle Harrison Over 5.5 REB",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Marina Mabrey Over 3.5 REB",0.0344,3.44
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Natasha Howard Over 6.5 REB",0.0881,8.81
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Olivia Miles Over 4.5 REB",0.0811,8.11
+"Indiana Fever","Seattle Storm","2026-07-28","Aliyah Boston Under 3.5 AST",0.0481,4.81
+"Indiana Fever","Seattle Storm","2026-07-28","Caitlin Clark Under 8.5 AST",0.1,10
+"Indiana Fever","Seattle Storm","2026-07-28","Flau'jae Johnson Over 3.5 AST",0.0535,5.35
+"Indiana Fever","Seattle Storm","2026-07-28","Jade Melbourne Over 3.5 AST",0.0398,3.98
+"Indiana Fever","Seattle Storm","2026-07-28","Kelsey Mitchell Over 2.5 AST",0.064,6.4
+"Indiana Fever","Seattle Storm","2026-07-28","Natisha Hiedeman Under 4.5 AST",0.0467,4.67
+"Indiana Fever","Seattle Storm","2026-07-28","Aliyah Boston Over 15.5 PTS",0.0566,5.66
+"Indiana Fever","Seattle Storm","2026-07-28","Dominique Malonga Under 18.5 PTS",0.1,10
+"Indiana Fever","Seattle Storm","2026-07-28","Flau'jae Johnson Over 14.5 PTS",0.1,10
+"Indiana Fever","Seattle Storm","2026-07-28","Jade Melbourne Over 8.5 PTS",0.0446,4.46
+"Indiana Fever","Seattle Storm","2026-07-28","Kelsey Mitchell Over 22.5 PTS",0.1,10
+"Indiana Fever","Seattle Storm","2026-07-28","Monique Billings Over 7.5 PTS",0.0356,3.56
+"Indiana Fever","Seattle Storm","2026-07-28","Natisha Hiedeman Over 15.5 PTS",0.0558,5.58
+"Indiana Fever","Seattle Storm","2026-07-28","Sophie Cunningham Over 8.5 PTS",0.0431,4.31
+"Indiana Fever","Seattle Storm","2026-07-28","Awa Fam Under 21.5 PRA",0.0974,9.74
+"Indiana Fever","Seattle Storm","2026-07-28","Caitlin Clark Under 33.5 PRA",0.0917,9.17
+"Indiana Fever","Seattle Storm","2026-07-28","Dominique Malonga Under 29.5 PRA",0.0982,9.82
+"Indiana Fever","Seattle Storm","2026-07-28","Flau'jae Johnson Over 23.5 PRA",0.0876,8.76
+"Indiana Fever","Seattle Storm","2026-07-28","Kelsey Mitchell Over 26.5 PRA",0.1,10
+"Indiana Fever","Seattle Storm","2026-07-28","Aliyah Boston Under 8.5 REB",0.0873,8.73
+"Indiana Fever","Seattle Storm","2026-07-28","Caitlin Clark Under 3.5 REB",0.1,10
+"Indiana Fever","Seattle Storm","2026-07-28","Dominique Malonga Over 9.5 REB",0.0654,6.54
+"Indiana Fever","Seattle Storm","2026-07-28","Monique Billings Over 5.5 REB",0.0559,5.59
+"Indiana Fever","Seattle Storm","2026-07-28","Natisha Hiedeman Over 2.5 REB",0.0801,8.01
+"Indiana Fever","Seattle Storm","2026-07-28","Sophie Cunningham Under 2.5 REB",0.1,10
+"Indiana Fever","Seattle Storm","2026-07-28","Dominique Malonga Over 1.5 AST",0.0387,3.87
+"Connecticut Sun","Washington Mystics","2026-07-28","Sonia Citron Over 3.5 AST",0.0692,6.92
+"Connecticut Sun","Washington Mystics","2026-07-28","Aaliyah Edwards Under 9.5 PTS",0.0676,6.76
+"Connecticut Sun","Washington Mystics","2026-07-28","Aneesah Morrow Under 8.5 PTS",0.1,10
+"Connecticut Sun","Washington Mystics","2026-07-28","Diamond Miller Under 8.5 PTS",0.0208,2.08
+"Connecticut Sun","Washington Mystics","2026-07-28","Olivia Nelson-Ododa Over 10.5 PTS",0.0414,4.14
+"Connecticut Sun","Washington Mystics","2026-07-28","Shakira Austin Over 14.5 PTS",0.1,10
+"Connecticut Sun","Washington Mystics","2026-07-28","Aaliyah Edwards Under 15.5 PRA",0.0705,7.05
+"Connecticut Sun","Washington Mystics","2026-07-28","Aneesah Morrow Under 19.5 PRA",0.1,10
+"Connecticut Sun","Washington Mystics","2026-07-28","Shakira Austin Over 26.5 PRA",0.1,10
+"Connecticut Sun","Washington Mystics","2026-07-28","Aneesah Morrow Under 7.5 REB",0.1,10
+"Connecticut Sun","Washington Mystics","2026-07-28","Olivia Nelson-Ododa Over 5.5 REB",0.0346,3.46
+"Connecticut Sun","Washington Mystics","2026-07-28","Shakira Austin Over 9.5 REB",0.1,10
+"Connecticut Sun","Washington Mystics","2026-07-28","Sonia Citron Over 3.5 REB",0.018,1.8
+"New York Liberty","Los Angeles Sparks","2026-07-28","Breanna Stewart Over 3.5 AST",0.0227,2.27
+"New York Liberty","Los Angeles Sparks","2026-07-28","Jonquel Jones Over 2.5 AST",0.0607,6.07
+"New York Liberty","Los Angeles Sparks","2026-07-28","Nneka Ogwumike Over 3.5 AST",0.0851,8.51
+"New York Liberty","Los Angeles Sparks","2026-07-28","Pauline Astier Over 3.5 AST",0.0774,7.74
+"New York Liberty","Los Angeles Sparks","2026-07-28","Rae Burrell Over 2.5 AST",0.0565,5.65
+"New York Liberty","Los Angeles Sparks","2026-07-28","Ariel Atkins Under 11.5 PTS",0.0549,5.49
+"New York Liberty","Los Angeles Sparks","2026-07-28","Breanna Stewart Over 21.5 PTS",0.0383,3.83
+"New York Liberty","Los Angeles Sparks","2026-07-28","Cameron Brink Under 10.5 PTS",0.1,10
+"New York Liberty","Los Angeles Sparks","2026-07-28","Dearica Hamby Over 14.5 PTS",0.1,10
+"New York Liberty","Los Angeles Sparks","2026-07-28","Jonquel Jones Over 14.5 PTS",0.0266,2.66
+"New York Liberty","Los Angeles Sparks","2026-07-28","Sabrina Ionescu Over 18.5 PTS",0.0761,7.61
+"New York Liberty","Los Angeles Sparks","2026-07-28","Ariel Atkins Under 17.5 PRA",0.0839,8.39
+"New York Liberty","Los Angeles Sparks","2026-07-28","Dearica Hamby Over 24.5 PRA",0.0494,4.94
+"New York Liberty","Los Angeles Sparks","2026-07-28","Erica Wheeler Under 19.5 PRA",0.0463,4.63
+"New York Liberty","Los Angeles Sparks","2026-07-28","Jonquel Jones Over 26.5 PRA",0.0613,6.13
+"New York Liberty","Los Angeles Sparks","2026-07-28","Nneka Ogwumike Over 29.5 PRA",0.1,10
+"New York Liberty","Los Angeles Sparks","2026-07-28","Sabrina Ionescu Over 27.5 PRA",0.0447,4.47
+"New York Liberty","Los Angeles Sparks","2026-07-28","Breanna Stewart Over 8.5 REB",0.0567,5.67
+"New York Liberty","Los Angeles Sparks","2026-07-28","Cameron Brink Under 5.5 REB",0.1,10
+"New York Liberty","Los Angeles Sparks","2026-07-28","Dearica Hamby Under 7.5 REB",0.1,10
+"New York Liberty","Los Angeles Sparks","2026-07-28","Jonquel Jones Over 9.5 REB",0.1,10
+"New York Liberty","Los Angeles Sparks","2026-07-28","Nneka Ogwumike Over 8.5 REB",0.1,10
+"New York Liberty","Los Angeles Sparks","2026-07-28","Rae Burrell Under 2.5 REB",0.0752,7.52
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Under 186.5",0.1,10
+"Connecticut Sun","Washington Mystics","2026-07-28","Lauren Betts Over 5.5 PTS",0.1,10
+"Connecticut Sun","Washington Mystics","2026-07-28","Lauren Betts Over 3.5 REB",0.0679,6.79
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Nia Coffey Under 8.5 PTS",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Julie Allemand Over 17.5 PRA",0.0571,5.71
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Marina Mabrey Over 27.5 PRA",0.0642,6.42
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Julie Allemand Over 4.5 REB",0.1,10
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Maria Conde Over 4.5 REB",0.0438,4.38
+"Toronto Tempo","Minnesota Lynx","2026-07-28","Isabelle Harrison Over 19.5 PRA",0.1,10
+"Indiana Fever","Seattle Storm","2026-07-28","Zia Cooke Under 7.5 PTS",0.0984,9.84
+"Portland Fire","Las Vegas Aces","2026-07-28","Carla Leite Over 23.5 PRA",0.0385,3.85
+"Portland Fire","Las Vegas Aces","2026-07-28","Emily Engstler Over 17.5 PRA",0.0293,2.93
+"New York Liberty","Los Angeles Sparks","2026-07-28","Nneka Ogwumike Over 2.5 AST",0.1,10
+"New York Liberty","Los Angeles Sparks","2026-07-28","Nneka Ogwumike Over 28.5 PRA",0.1,10

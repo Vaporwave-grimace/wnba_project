@@ -1,6 +1,6 @@
 # WNBA Daily Prop Edge Digest Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a curated daily Discord digest of the best currently-live WNBA prop edges (≥6% EV), posted twice a day into the existing `#auto-bet-broadcast` channel, without disturbing the existing real-time individual alerts or being auto-ingested by `bet_router` as a duplicate bet.
 

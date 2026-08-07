@@ -1,5 +1,7 @@
 # WNBA Sandbox Intelligence Pipeline — Current State
 
+**Before editing any file, read it first. Before modifying a function, grep for all callers. Research before you edit.**
+
 > For full architecture, variable definitions, and pipeline diagram see `WNBA_Architecture.md`.
 
 This file is living-state only: stack, data sources, build status, and the

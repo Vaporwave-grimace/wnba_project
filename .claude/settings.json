@@ -21,5 +21,6 @@
       "PowerShell(cd \"G:/My Drive/Scripting Projects/wnba_project\"; Rscript -e \"suppressMessages\\(library\\(wehoop\\)\\); df <- wehoop::load_wnba_player_box\\(seasons=2025L\\); cat\\('nrow:', nrow\\(df\\), '\\\\n'\\); print\\(head\\(unique\\(df$team_display_name\\), 5\\)\\); print\\(head\\(unique\\(df$opponent_team_display_name\\), 5\\)\\); cat\\('any NA opponent:', sum\\(is.na\\(df$opponent_team_display_name\\)\\), '\\\\n'\\); cat\\('any NA game_id:', sum\\(is.na\\(df$game_id\\)\\), 'any NA player:', sum\\(is.na\\(df$athlete_display_name\\)\\), '\\\\n'\\)\" 2>&1 | Select-Object -Last 30)",
       "PowerShell(Rscript \"C:\\\\Users\\\\Mike\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\g--My-Drive-Scripting-Projects-mlb-NRFI-YRFI\\\\56f8e0b5-07af-463e-8109-2d8735e41895\\\\scratchpad\\\\check_wehoop.R\" 2>&1)"
     ]
-  }
+  },
+  "disabledMcpjsonServers": ["filesystem-with-morph"]
 }
